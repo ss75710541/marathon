@@ -13,7 +13,7 @@ import org.apache.mesos.Protos.{ Offer, TaskInfo }
 import scala.concurrent.Future
 
 /**
-  * Provides a thin wrapper around an OfferMatcher implemented as an actors.
+  * Provides a thin wrapper around an OfferMatcher implemented as an actor.
   */
 class ActorOfferMatcher(clock: Clock, actorRef: ActorRef) extends OfferMatcher {
   def matchOffer(deadline: Timestamp, offer: Offer): Future[MatchedTasks] = {
