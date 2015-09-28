@@ -16,7 +16,7 @@ import mesosphere.marathon.upgrade._
 import mesosphere.marathon.{ MarathonConf, MarathonSchedulerService, ModuleNames, PortRangeExhaustedException }
 import mesosphere.util.SerializeExecution
 import mesosphere.util.ThreadPoolContext.context
-import org.apache.log4j.Logger
+import org.slf4j.LoggerFactory
 
 import scala.collection.immutable.Seq
 import scala.collection.mutable
@@ -37,7 +37,7 @@ class GroupManager @Singleton @Inject() (
     config: MarathonConf,
     @Named(EventModule.busName) eventBus: EventStream) extends PathFun {
 
-  private[this] val log = Logger.getLogger(getClass.getName)
+  private[this] val log = LoggerFactory.getLogger(getClass.getName)
   private[this] val zkName = groupRepo.zkRootName
 
   def rootGroup(): Future[Group] =
@@ -162,6 +162,7 @@ class GroupManager @Singleton @Inject() (
       _ <- scheduler.deploy(plan, force)
       _ <- storeUpdatedApps(plan)
       _ <- groupRepo.store(zkName, plan.target)
+      _ = log.info(s"Updated groups/apps according to deployment plan ${plan.id}")
     } yield plan
 
     deployment.onComplete {

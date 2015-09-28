@@ -9,8 +9,8 @@ import com.google.inject.Guice
 import mesosphere.chaos.http.{ HttpConf, HttpModule, HttpService }
 import mesosphere.chaos.metrics.MetricsModule
 import org.apache.commons.io.FileUtils
-import org.apache.log4j.Logger
 import org.rogach.scallop.ScallopConf
+import org.slf4j.LoggerFactory
 
 import scala.concurrent.duration._
 import scala.concurrent.{ Await, ExecutionContext, Future, Promise }
@@ -26,7 +26,7 @@ import scala.util.{ Failure, Success, Try }
   */
 object ProcessKeeper {
 
-  private[this] val log = Logger.getLogger(getClass.getName)
+  private[this] val log = LoggerFactory.getLogger(getClass.getName)
   private[this] var processes = List.empty[Process]
   private[this] var services = List.empty[Service]
 
@@ -65,6 +65,12 @@ object ProcessKeeper {
                     mainClass: String = "mesosphere.marathon.Main",
                     startupLine: String = "Started ServerConnector"): Process = {
 
+    val debugArgs = List(
+      "-Dakka.loglevel=DEBUG",
+      "-Dakka.actor.debug.receive=true",
+      "-Dakka.actor.debug.autoreceive=true",
+      "-Dakka.actor.debug.lifecycle=true"
+    )
     val argsWithMain = mainClass :: arguments
 
     val mesosWorkDir: String = "/tmp/marathon-itest-marathon"
@@ -73,18 +79,19 @@ object ProcessKeeper {
     FileUtils.forceMkdir(mesosWorkDirFile)
 
     startJavaProcess(
-      "marathon", heapInMegs = 512, argsWithMain, cwd,
+      "marathon", heapInMegs = 512, debugArgs ++ argsWithMain, cwd,
       env + (ENV_MESOS_WORK_DIR -> mesosWorkDir),
       upWhen = _.contains(startupLine))
   }
 
   def startJavaProcess(name: String, heapInMegs: Int, arguments: List[String],
                        cwd: File = new File("."), env: Map[String, String] = Map.empty, upWhen: String => Boolean): Process = {
-    log.info(s"Start java process $name with args: $arguments")
     val javaExecutable = sys.props.get("java.home").fold("java")(_ + "/bin/java")
     val classPath = sys.props.getOrElse("java.class.path", "target/classes")
     val memSettings = s"-Xmx${heapInMegs}m"
-    val builder = Process(javaExecutable :: memSettings :: "-classpath" :: classPath :: arguments, cwd, env.toList: _*)
+    val command: List[String] = javaExecutable :: memSettings :: "-classpath" :: classPath :: arguments
+    log.info(s"Start java process $name with command: ${command.mkString(" ")}")
+    val builder = Process(command, cwd, env.toList: _*)
     val process = startProcess(name, builder, upWhen)
     log.info(s"Java process $name up and running!")
     process
@@ -145,10 +152,20 @@ object ProcessKeeper {
     }
   }
 
-  def stopOSProcesses(grep: String): Unit = {
-    val PIDRE = """\s*(\d+)\s.*""".r
-    val processes = ("ps -x" #| s"grep $grep").!!.split("\n").map { case PIDRE(pid) => pid }
-    processes.foreach(p => s"kill -9 $p".!)
+  val PIDRE = """^\s*(\d+)\s+(\S*)$""".r
+
+  def stopJavaProcesses(wantedMainClass: String): Unit = {
+    val pids = "jps -l".!!.split("\n").collect {
+      case PIDRE(pid, mainClass) if mainClass.contains(wantedMainClass) => pid
+    }
+    if (pids.nonEmpty) {
+      val killCommand = s"kill -9 ${pids.mkString(" ")}"
+      log.warn(s"Left over processes, executing: $killCommand")
+      val ret = killCommand.!
+      if (ret != 0) {
+        log.error(s"kill returned $ret")
+      }
+    }
   }
 
   def stopAllProcesses(): Unit = {
@@ -192,11 +209,17 @@ object ProcessKeeper {
 
   def stopAllServices(): Unit = {
     services.foreach(_.stopAsync())
-    services.par.foreach(_.awaitTerminated(5, TimeUnit.SECONDS))
+    services.par.foreach { service =>
+      try { service.awaitTerminated(5, TimeUnit.SECONDS) }
+      catch {
+        case NonFatal(ex) => log.error(s"Could not stop service $service", ex)
+      }
+    }
     services = Nil
   }
 
   def shutdown(): Unit = {
+    log.info(s"Cleaning up Processes $processes and Services $services")
     stopAllProcesses()
     stopAllServices()
   }

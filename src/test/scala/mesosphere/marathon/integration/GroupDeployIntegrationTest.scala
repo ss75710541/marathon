@@ -6,7 +6,6 @@ import mesosphere.marathon.state.{ PathId, UpgradeStrategy }
 import org.apache.http.HttpStatus
 import org.scalatest._
 import spray.http.DateTime
-import spray.httpx.UnsuccessfulResponseException
 
 import scala.concurrent.duration._
 
@@ -298,7 +297,7 @@ class GroupDeployIntegrationTest
     ping(service.id) should be < ping(frontend.id)
   }
 
-  test("Groups with dependant Applications get upgraded in the correct order with maintained upgrade strategy") {
+  ignore("Groups with dependant Applications get upgraded in the correct order with maintained upgrade strategy") {
     var ping = Map.empty[String, DateTime]
     def key(health: IntegrationHealthCheck) = s"${health.appId}_${health.versionId}"
     def storeFirst(health: IntegrationHealthCheck) {

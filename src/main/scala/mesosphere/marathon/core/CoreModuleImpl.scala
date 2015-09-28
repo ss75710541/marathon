@@ -9,6 +9,7 @@ import mesosphere.marathon.core.launcher.LauncherModule
 import mesosphere.marathon.core.launchqueue.LaunchQueueModule
 import mesosphere.marathon.core.leadership.LeadershipModule
 import mesosphere.marathon.core.matcher.manager.OfferMatcherManagerModule
+import mesosphere.marathon.core.plugin.PluginManager
 import mesosphere.marathon.core.task.bus.TaskBusModule
 import mesosphere.marathon.core.task.tracker.TaskTrackerModule
 import mesosphere.marathon.metrics.Metrics
@@ -33,21 +34,23 @@ class CoreModuleImpl @Inject() (
     appRepository: AppRepository,
     taskTracker: TaskTracker,
     taskFactory: TaskFactory,
-    leaderInfo: LeaderInfo) extends CoreModule {
+    leaderInfo: LeaderInfo,
+    clock: Clock) extends CoreModule {
 
   // INFRASTRUCTURE LAYER
 
-  override lazy val clock = Clock()
   private[this] lazy val random = Random
   private[this] lazy val shutdownHookModule = ShutdownHooks()
   private[this] lazy val actorsModule = new ActorsModule(shutdownHookModule, actorSystem)
 
   lazy val leadershipModule = new LeadershipModule(actorsModule.actorRefFactory)
 
+  override lazy val pluginManager = PluginManager(marathonConf)
+
   // TASKS
 
   override lazy val taskBusModule = new TaskBusModule()
-  override lazy val taskTrackerModule = new TaskTrackerModule(leadershipModule)
+  override lazy val taskTrackerModule = new TaskTrackerModule(leadershipModule, clock)
 
   // OFFER MATCHING AND LAUNCHING TASKS
 
@@ -62,6 +65,7 @@ class CoreModuleImpl @Inject() (
     clock, metrics, marathonConf,
 
     // external guicedependencies
+    taskTracker,
     marathonSchedulerDriverHolder,
 
     // internal core dependencies

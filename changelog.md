@@ -1,17 +1,22 @@
+## Changes from 0.11.0 to 0.12.0
+
+### Fixed Issues
+
+- #2294 - Make boolean command line flags use Scallop's 'toggle'
+
 ## Changes from 0.10.0 to 0.11.0
 
 ### Breaking Changes
 
-* Java 8 or higher is needed to run Marathon, since Java 6 and 7 support has reached end of life. 
-
+* Java 8 or higher is needed to run Marathon, since Java 6 and 7 support has reached end of life.
 * `--revive_offers_for_new_apps` is now the default. If you want to avoid resetting filters
   if new tasks need to be started, you can disable this by `--disable_revive_offers_for_new_apps`.
-  
+
 ### Overview
 
-#### Marathon uses Java 8 
+#### Marathon uses Java 8
 
-Java 8 has been out for more than a year now. The support for older versions of Java has reached end of life. 
+Java 8 has been out for more than a year now. The support for older versions of Java has reached end of life.
 We switched completely to the latest stable JVM release.
 We compile, test and run Marathon against Java 8.
 Note for the Marathon Docker image: the base image of Marathon is now the standard java:8-jdk docker image.
@@ -26,7 +31,7 @@ use the `--mesos_leader_ui_url` configuration to change the base URL of these li
 
 #### New versioning information in API and UI
 
-We now have `"versionInfo"` with `"lastConfigChangeAt"` and `"lastScalingAt"` in the apps JSON of our API. 
+We now have `"versionInfo"` with `"lastConfigChangeAt"` and `"lastScalingAt"` in the apps JSON of our API.
 `"lastConfigChangeAt"` is the timestamp of the last change to the application that was not just a restart or
 a scaling operation. `"lastScalingAt"` is the time stamp of the last scaling or restart operation.
 
@@ -34,7 +39,7 @@ a scaling operation. `"lastScalingAt"` is the time stamp of the last scaling or 
 
 If you pass `embed=apps.taskStats`/`embed=app.taskStats` as a query parameter, you get additional taskStats
 embedded in you app JSON.
- 
+
 Task statistics are provided for the following groups of tasks. If no tasks for the group exist, no statistics are
 offered:
 
@@ -61,8 +66,8 @@ Example JSON:
             "unhealthy" : 4
           },
           // "lifeTime" is only included if there are running tasks.
-          "lifeTime" : { 
-            // Measured from `"startedAt"` (timestamp of the Mesos TASK_RUNNING status update) of each running task 
+          "lifeTime" : {
+            // Measured from `"startedAt"` (timestamp of the Mesos TASK_RUNNING status update) of each running task
             // until now.
             "averageSeconds" : 20.0,
             "medianSeconds" : 10.0
@@ -92,9 +97,9 @@ very many tasks.
 In this release, we introduce "embed" parameters for all GET requests in the
 app end-point that specify which information to embed. Right now, we deliver all
 information by default that we delivered before but we encourage you to specify
-embed parameters for the information that you need. 
+embed parameters for the information that you need.
 
-In the future, we will only 
+In the future, we will only
 deliver information you explicitly requested by default, even though we will
 allow some compatibility configuration option. This improves performance by not
 returning information that you might not need.
@@ -110,7 +115,15 @@ with the `reviveOffers` Mesos scheduler API call. This should result in more spe
 for any reason you dislike this behavior, you can disable it with `--disable_revive_offers_for_new_apps`
 (not recommended).
 
-When Marathon has no current use for an offer, it will decline the offer for a configurable period. A short duration 
+The order in which mesos receives `reviveOffers` and `declineOffer` calls is not guaranteed. Therefore, as
+long as we still need offers to launch tasks, we repeat the `reviveOffers` call for `--revive_offers_repetitions`
+times so that our last `reviveOffers` will be received after all relevant `declineOffer` calls with high
+probability.
+
+* `--revive_offers_repetitions` (Optional. Default: 3):
+    Repeat every reviveOffer request this many times, delayed by the `--min_revive_offers_interval`.
+
+When Marathon has no current use for an offer, it will decline the offer for a configurable period. A short duration
 might lead to resource starvation for other frameworks if you run many frameworks
 in your cluster. You should only need to reduce it if you use `--disable_revive_offers_for_new_apps`.
 
@@ -120,10 +133,10 @@ in your cluster. You should only need to reduce it if you use `--disable_revive_
 
 To prevent overloading Mesos itself, you can now restrict how many tasks Marathon launches per time interval.
 By default, we allow 1000 unconfirmed task launches every 30 seconds. In addition, Marathon
-considers `TASK_RUNNING` status updates from Mesos as launch confirmations and allows launching one more task 
+considers `TASK_RUNNING` status updates from Mesos as launch confirmations and allows launching one more task
 for every confirmed launch.
-    
-* `--launch_token_refresh_interval` (Optional. Default: 30000): 
+
+* `--launch_token_refresh_interval` (Optional. Default: 30000):
     The interval (ms) in which to refresh the launch tokens to `--launch_token_count`.
 * `--launch_tokens` (Optional. Default: 1000): Launch tokens per interval.
 
@@ -132,14 +145,26 @@ As a result of this, the `--max_tasks_per_offer_cycle` options is deprecated and
 To prevent overloading Marathon and maintain speedy offer processing, there is also a timeout for matching each
 incoming resource offer, i.e. finding suitable tasks to launch for incoming offers.
 
-* `--offer_matching_timeout` (Optional. Default: 1000): 
+* `--offer_matching_timeout` (Optional. Default: 1000):
     Offer matching timeout (ms). Stop trying to match additional tasks for this offer after this time.
     All already matched tasks are launched.
 
+All launched tasks are stored before launching them. There is also a new timeout for this:
+
+* <span class="label label-default">v0.11.0</span> `--save_tasks_to_launch_timeout` (Optional. Default: 3000):
+    Timeout (ms) after matching an offer for saving all matched tasks that we are about to launch.
+    When reaching the timeout, only the tasks that we could save within the timeout are also launched.
+    All other task launches are temporarily rejected and retried later.
+
+If the mesos master fails over or in other unusual circumstances, a launch task request might get lost.
+You can configure how long Marathon waits for the first `TASK_STAGING` update.
+
+* <span class="label label-default">v0.11.0</span> `--task_launch_confirm_timeout` (Optional. Default: 10000):
+  Time, in milliseconds, to wait for a task to enter the `TASK_STAGING` state before killing it.
 
 #### No pseudo-deterministic assignment of host ports anymore
 
-If you specify non-zero `"ports"` in your app JSON, they are used as service ports. The old code contained logic that 
+If you specify non-zero `"ports"` in your app JSON, they are used as service ports. The old code contained logic that
 would assign these ports as host ports if available in the
 processed offer. That misled people into thinking that these ports corresponded to host ports. The new code always
 randomizes host ports assignment without `"requirePorts"` or explicit `"hostPort"` configuration.
@@ -147,8 +172,8 @@ randomizes host ports assignment without `"requirePorts"` or explicit `"hostPort
 #### Last task failures are persisted
 
 Marathon has exposed the `"lastTaskFailure"` via the API for a while but this information was not persisted
- across restarts or on fail over. Now it is.
- 
+across restarts or on fail over. Now it is.
+
 #### Logging command line parameters on startup
 
 Marathon will now log all command line parameters on startup. Example:
@@ -197,12 +222,12 @@ immediately when accepting the deployment.
 #### No automatic reset of the app backoff when detecting a running task
 
 When encountering task failures, Marathon uses the backoff duration to throttle launching tasks.
-See `"backoffSeconds"`, `"backoffFactor"` and `"maxLaunchDelaySeconds"` in the REST API documentation 
+See `"backoffSeconds"`, `"backoffFactor"` and `"maxLaunchDelaySeconds"` in the REST API documentation
 for further information.
 
 There was an undocumented feature that reset the backoff completely whenever Marathon received a TASK_RUNNING
- notification from Mesos. This led to problems when an application crashed fast after startup.
- 
+notification from Mesos. This led to problems when an application crashed fast after startup.
+
 In the new Marathon version, the backoff delay is never reset automatically. You can reset it manually, though.
 
 #### New `MARATHON_APP_DOCKER_IMAGE` environment variable
@@ -212,18 +237,23 @@ an environment variable `MARATHON_APP_DOCKER_IMAGE` containing its value.
 
 ### Important bug fixes
 
-* \#1553 - 
+* \#1553 -
   Marathon will now correctly reload task state information after a fail over
-* \#1924 - 
+* \#1924 -
   Marathon will accept offers without disk resources if no disk resources are required
-* \#1671 - Mesos will now use the hostname given 
+* \#1671 - Mesos will now use the hostname given
   by the `--hostname` parameter to communicate with Marathon
-* \#1926 - 
+* \#1926 -
   Our leader proxy code used buffered IO without intermediate flushing which did not play well with
   streaming events from our `/v2/events` endpoint
 * \#1877 -
   Marathon will now exit on startup failures instead of keeping running without being able to answer to requests.
   For example: Marathon will now exit if the specified http port is already used for something else.
+
+### Known issues
+
+Applications might not be returned for a little while even after `POST /v2/apps` returned 201. This is
+side-effect of storing the tasks information in ZooKeeper and we plan to fix it in the next releases.
 
 ### Under the Hood
 
@@ -235,7 +265,7 @@ Jetty 9 has a completely overhauled I/O layer, Servlet API 3.0, SPDY/3 and WebSo
 #### Improved SSE handling
 
 As part of the Jetty 9 update, the SSE support for `/v2/events` has been improved.
-The event name `event: event-name` is added to every `data: json` entry for easier filtering and handling. 
+The event name `event: event-name` is added to every `data: json` entry for easier filtering and handling.
 
 #### Play JSON everywhere
 
@@ -244,48 +274,86 @@ interface which make it easier to write correct code.
 
 ### Details for Marathon UI
 
-#### Added
-- \#1204 - Please add a search bar to the applications overview to filter the
-  list of applications
-- \#1137 - Add tooltip on hover to progress bars
-  * A tooltip that displays the individual health statuses is now shown when
-    the mouse is over the progress bars in the apps overview page.
-- \#1864 - Add a link to the app detail page from the deployments tab
-- \#1756 - Create a "Not found page"
-- \#878 - Jump to Mesos sandbox from UI
-  * You can go directly to the Mesos tasks sandbox from the tasks detail page.
-- \#968 - Expose a way to identify "fragile" marathon apps in the web UI
-  * If there is a lastTaskFailure this information will be shown in a tab
-    called "Last task failure" on the app page.
-- \#1937 - Display version string also in local time
-- \#1058 - Add sorting to the health column in the app list
-- \#1993 - Show Marathon UI version in about modal
-  * The Marathon UI version will be shown on mouse hovering
-    above the API version field. Second way is pressing "g v" on the keyboard.
-- \#808 - Make app configuration fields editable
-  * A selected application version can now be edited
-    by pressing on the "Edit these settings"-button.
-- \#124 - Expose environment variables in app modal dialog
-- \#2010 - Show task life time and states in debug tab
-- \#2012 - Show summary about the most recent configuration change
-- \#2133 - Display health checks settings in the application configuration tab
+#### New application modal, including Docker-specific fields
 
-#### Changed
-- \#124 - Expose all /v2 App attributes in UI
-  * The optional settings inside the new application modal dialog are now
-    grouped together
-  * It is now possible to specify Docker container settings
-- \#1673 - Prerequisites to deploy a webjar via TeamCity
-  * In a production environment, the API will be requested by ../v2/ instead of
-    ./v2/, because the UI is now served in an "/ui/"-path via Marathon.
-    Also the dist-folder isn't needed in the repository anymore, the files will
-    be generated on-the-fly.
-- \#1251 - Show total resource usage in app list
-- \#2039 - Updated app config edit button styles
-- \#2071 - Replace native alert, prompt and confirm with custom modals
-- \#2116 - Adjust refresh button style
+The application modal has undergone significant changes, simplifying the app creation process and giving the
+user access to more advanced features. In particular, a section of the form is dedicated to Docker specific
+fields, allowing the user to create Dockerized applications directly from the UI.
 
-#### Fixed
+#### Edit application configurations
+
+Previous versions of Marathon did not allow users to make modifications to application configurations after
+the application had been created. It's now possible to edit an application using the same improved modal that
+is used to create applications.
+
+#### Usability improvements to the applications view
+
+The applications view is the 'dashboard' for Marathon UI. This version brings significant improvements to its
+utility, especially by revealing more about application health.
+
+##### Search bar
+
+Applications can be filtered by name using the search bar in the top left-hand corner of the applications view.
+
+##### Show total resource usage
+
+Previously, only the configured resource usage was shown in the applications view, so an application with 100
+running tasks would show the same resource usage as an identical application with only 1 running task. Now, the
+combined resource usage is shown, allowing users to sort applications by their total assigned resources.
+
+##### Sort applications by health
+
+Unhealthy apps can be found quickly by sorting the application table by health status.
+
+##### Better progress information feedback
+
+A tooltip is displayed when the user hovers the application progress bar, showing individual health statuses.
+
+#### More information on applications and deployments
+
+In previous versions of Marathon, only an application's configuration and healthcheck status were available
+from the UI. Marathon 0.11 brings the following features:
+
+##### Debug app tab
+
+A new tab is available in the application detail view. It displays the most recent changes to the application
+configuration, the most recent task failure, and the relevant statistics.
+
+##### Health checks in configuration tab.
+
+Application health checks are now shown in the application configuration tab.
+
+##### Direct Mesos sandbox access
+
+Where available, the new 'Mesos details' link in the task detail view shows a link to the relevant sandbox in
+the Mesos UI.
+
+#### Other features
+
+##### User- and debug-friendly version strings
+
+The Marathon version string is now shown in the user's local time. In addition, The UI version string is
+available when the user hovers the version string, and in a separate alert when the user hits the 'g v'
+shortcut.
+
+##### Custom alerts
+
+Where browser-native dialogs were previously used, Marathon now uses custom dialogs which are consistent with
+the UI style and which do not interrupt the UI when in the foreground.
+
+##### Not Found page
+
+When the user follows a bad link, they encounter a Not Found page rather than being redirected to the
+applications view.
+
+#### UI build uses a webjar
+
+Instead of relying on git submodules, the UI is now released as a webjar which Marathon pulls in during its
+own build. This allows developers to use the latest stable UI assets and simplifies the build process. This
+has had the side-effect that the ui is now served from the /ui/ endpoint instead of the root.
+
+#### Fixed issues
+
 - \#548 - UI showing empty list after scaling when on page > 1
   * The task list shows the last available page
     if tasks count decreases after scaling.
@@ -412,7 +480,7 @@ This is done by making the amount of time for which an offer will be declined co
 If there is need for an offer (e.g., when a new app is added), then all already declined offers will be actively revived.
 `--decline_offer_duration` allows configuring the duration for which unused offers are declined.
 `--revive_offers_for_new_apps` if specified, then revive offers will be called when a new app is added to the TaskQueue
-`--min_revive_offers_interval` if `--revive_offers_for_new_apps` is specified, do not call reviveOffers more often than this interval. 
+`--min_revive_offers_interval` if `--revive_offers_for_new_apps` is specified, do not call reviveOffers more often than this interval.
 
 
 ### Fixed Issues

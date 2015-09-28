@@ -4,9 +4,9 @@ import mesosphere.marathon.Protos.MarathonTask
 import mesosphere.marathon.state.AppDefinition
 import mesosphere.marathon.tasks.PortsMatcher
 import mesosphere.mesos.protos.{ RangesResource, Resource }
-import org.apache.log4j.Logger
 import org.apache.mesos.Protos
 import org.apache.mesos.Protos.Offer
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
 import scala.collection.immutable.Seq
@@ -29,12 +29,12 @@ object ResourceMatcher {
     }
   }
 
-  private[this] val log = Logger.getLogger(getClass)
+  private[this] val log = LoggerFactory.getLogger(getClass)
 
   case class ResourceMatch(cpuRole: Role, memRole: Role, diskRole: Role, ports: Seq[RangesResource])
 
   //scalastyle:off method.length
-  def matchResources(offer: Offer, app: AppDefinition, runningTasks: => Set[MarathonTask],
+  def matchResources(offer: Offer, app: AppDefinition, runningTasks: => Iterable[MarathonTask],
                      acceptedResourceRoles: Set[String] = Set("*")): Option[ResourceMatch] = {
 
     val groupedResources: Map[Role, mutable.Buffer[Protos.Resource]] = offer.getResourcesList.asScala.groupBy(_.getName)

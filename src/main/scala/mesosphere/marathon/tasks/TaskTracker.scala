@@ -8,8 +8,8 @@ import mesosphere.marathon.Protos._
 import mesosphere.marathon.metrics.Metrics
 import mesosphere.marathon.state.{ PathId, StateMetrics, Timestamp }
 import mesosphere.util.state.{ PersistentEntity, PersistentStore }
-import org.apache.log4j.Logger
-import org.apache.mesos.Protos.TaskStatus
+import org.apache.mesos.Protos.{ TaskState, TaskStatus }
+import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
 import scala.collection._
@@ -18,17 +18,16 @@ import scala.collection.immutable.Set
 import scala.concurrent.{ Await, Future }
 
 class TaskTracker @Inject() (
-  store: PersistentStore,
-  config: MarathonConf,
-  val metrics: Metrics)
-    extends StateMetrics {
+    store: PersistentStore,
+    config: MarathonConf,
+    val metrics: Metrics) extends StateMetrics {
 
   import mesosphere.marathon.tasks.TaskTracker._
   import mesosphere.util.ThreadPoolContext.context
 
   implicit val timeout = config.zkTimeoutDuration
 
-  private[this] val log = Logger.getLogger(getClass.getName)
+  private[this] val log = LoggerFactory.getLogger(getClass.getName)
 
   val PREFIX = "task:"
   val ID_DELIMITER = ":"
@@ -105,7 +104,9 @@ class TaskTracker @Inject() (
       case Some(task) =>
         app.tasks.remove(task.getId)
 
-        timedWrite { Await.result(store.delete(getKey(appId, taskId)), timeout) }
+        timedWrite {
+          Await.result(store.delete(getKey(appId, taskId)), timeout)
+        }
 
         log.info(s"Task $taskId expunged and removed from TaskTracker")
 
@@ -154,24 +155,48 @@ class TaskTracker @Inject() (
     }
   }
 
-  def stagedTasks(): Iterable[MarathonTask] = apps.values.flatMap(_.tasks.values.filter(_.getStartedAt == 0))
+  def determineOverdueTasks(now: Timestamp): Iterable[MarathonTask] = {
 
-  def checkStagedTasks: Iterable[MarathonTask] = {
+    val nowMillis = now.toDateTime.getMillis
     // stagedAt is set when the task is created by the scheduler
-    val now = System.currentTimeMillis
-    val expires = now - config.taskLaunchTimeout()
-    val toKill = stagedTasks().filter(_.getStagedAt < expires)
+    val stagedExpire = nowMillis - config.taskLaunchTimeout()
+    val unconfirmedExpire = nowMillis - config.taskLaunchConfirmTimeout()
 
-    toKill.foreach(t => {
-      log.warn(s"Task '${t.getId}' was staged ${(now - t.getStagedAt) / 1000}s ago and has not yet started")
-    })
-    toKill
+    val toKill = apps.values.iterator.flatMap(_.tasks.values).filter { task =>
+      /*
+     * One would think that !hasStagedAt would be better for querying these tasks. However, the current implementation
+     * of [[MarathonTasks.makeTask]] will set stagedAt to a non-zero value close to the current system time. Therefore,
+     * all tasks will return a non-zero value for stagedAt so that we cannot use that.
+     *
+     * If, for some reason, a task was created (sent to mesos), but we never received a [[TaskStatus]] update event,
+     * the task will also be killed after reaching the configured maximum.
+     */
+      if (task.getStartedAt != 0) {
+        false
+      }
+      else if (task.hasStatus && task.getStatus.getState == TaskState.TASK_STAGING && task.getStagedAt < stagedExpire) {
+        log.warn(s"Should kill: Task '${task.getId}' was staged ${(nowMillis - task.getStagedAt) / 1000}s" +
+          s" ago and has not yet started")
+        true
+      }
+      else if (task.getStagedAt < unconfirmedExpire) {
+        log.warn(s"Should kill: Task '${task.getId}' was launched ${(nowMillis - task.getStagedAt) / 1000}s ago " +
+          s"and was not confirmed yet"
+        )
+        true
+      }
+      else false
+    }
+
+    toKill.toIterable
   }
 
   def expungeOrphanedTasks(): Unit = {
     // Remove tasks that don't have any tasks associated with them. Expensive!
     log.info("Expunging orphaned tasks from store")
-    val stateTaskKeys = timedRead { Await.result(store.allIds(), timeout).filter(_.startsWith(PREFIX)) }
+    val stateTaskKeys = timedRead {
+      Await.result(store.allIds(), timeout).filter(_.startsWith(PREFIX))
+    }
     val appsTaskKeys = apps.values.flatMap { app =>
       app.tasks.keys.map(taskId => getKey(app.appName, taskId))
     }.toSet
@@ -188,7 +213,9 @@ class TaskTracker @Inject() (
 
   private[tasks] def fetchApp(appId: PathId): InternalApp = {
     log.debug(s"Fetching app from store $appId")
-    val names = timedRead { Await.result(store.allIds(), timeout).toSet }
+    val names = timedRead {
+      Await.result(store.allIds(), timeout).toSet
+    }
     val tasks = TrieMap[String, MarathonTask]()
     val taskKeys = names.filter(name => name.startsWith(PREFIX + appId.safePath + ID_DELIMITER))
     for {
@@ -297,4 +324,5 @@ object TaskTracker {
   }
 
   case class App(appName: PathId, tasks: Set[MarathonTask], shutdown: Boolean)
+
 }

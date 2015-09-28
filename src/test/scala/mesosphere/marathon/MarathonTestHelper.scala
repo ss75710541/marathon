@@ -3,22 +3,23 @@ package mesosphere.marathon
 import com.github.fge.jackson.JsonLoader
 import com.github.fge.jsonschema.core.report.ProcessingReport
 import com.github.fge.jsonschema.main.JsonSchemaFactory
+import mesosphere.marathon.Protos.MarathonTask
 import mesosphere.marathon.api.JsonTestHelper
 import mesosphere.marathon.api.v2.json.V2AppDefinition
 
-import mesosphere.marathon.state.AppDefinition
+import mesosphere.marathon.state.{ Timestamp, AppDefinition }
 import mesosphere.marathon.state.PathId._
+import mesosphere.marathon.tasks.MarathonTasks
 import mesosphere.mesos.protos._
 import org.apache.mesos.Protos.{ CommandInfo, TaskID, TaskInfo, Offer }
-import org.rogach.scallop.ScallopConf
 import play.api.libs.json.Json
 
 trait MarathonTestHelper {
 
   import mesosphere.mesos.protos.Implicits._
 
-  def makeConfig(args: String*): MarathonConf = {
-    val opts = new ScallopConf(args) with MarathonConf {
+  def makeConfig(args: String*): AllConf = {
+    val opts = new AllConf(args) {
       // scallop will trigger sys exit
       override protected def onError(e: Throwable): Unit = throw e
     }
@@ -31,7 +32,7 @@ trait MarathonTestHelper {
     minReviveOffersInterval: Long = 100,
     mesosRole: Option[String] = None,
     acceptedResourceRoles: Option[Set[String]] = None,
-    envVarsPrefix: Option[String] = None): MarathonConf = {
+    envVarsPrefix: Option[String] = None): AllConf = {
 
     var args = Seq(
       "--master", "127.0.0.1:5050",
@@ -103,6 +104,22 @@ trait MarathonTestHelper {
       .setCommand(CommandInfo.newBuilder().setShell(true).addArguments("true"))
       .addResources(ScalarResource(Resource.CPUS, 1.0, "*"))
   }
+
+  def makeTaskFromTaskInfo(taskInfo: TaskInfo,
+                           offer: Offer = makeBasicOffer().build(),
+                           version: Timestamp = Timestamp(10), now: Timestamp = Timestamp(10)): MarathonTask =
+    {
+      import scala.collection.JavaConverters._
+      MarathonTasks.makeTask(
+        id = taskInfo.getTaskId.getValue,
+        host = offer.getHostname,
+        ports = Seq(1, 2, 3), // doesn't matter here
+        attributes = offer.getAttributesList.asScala,
+        version = version,
+        now = now,
+        slaveId = offer.getSlaveId
+      )
+    }
 
   def makeBasicApp() = AppDefinition(
     id = "test-app".toPath,

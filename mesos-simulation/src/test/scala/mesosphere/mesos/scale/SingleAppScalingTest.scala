@@ -39,8 +39,11 @@ class SingleAppScalingTest
     val maxTasksPerOffer = Option(System.getenv("MARATHON_MAX_TASKS_PER_OFFER")).getOrElse("1")
 
     ProcessKeeper.startMarathon(cwd, env,
-      List("--http_port", port.toString, "--zk", config.zk, "--enable_metrics",
-        "--max_tasks_per_offer", maxTasksPerOffer) ++ args.toList,
+      List("--http_port", port.toString,
+        "--zk", config.zk,
+        "--max_tasks_per_offer", maxTasksPerOffer,
+        "--task_launch_timeout", "20000",
+        "--task_launch_confirm_timeout", "1000") ++ args.toList,
       mainClass = "mesosphere.mesos.simulation.SimulateMesosMain")
   }
 
@@ -88,7 +91,10 @@ class SingleAppScalingTest
     var appInfos = Seq.newBuilder[JsValue]
 
     for (i <- 1 to 20) {
-      Thread.sleep(startTime + i * 1000 - System.currentTimeMillis())
+      val waitTime: Long = startTime + i * 1000 - System.currentTimeMillis()
+      if (waitTime > 0) {
+        Thread.sleep(waitTime)
+      }
       //      val currentApp = marathon.app(appIdPath)
       val appJson =
         (marathon.listAppsInBaseGroup.entityJson \ "apps")

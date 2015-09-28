@@ -56,9 +56,9 @@ Instructions on how to install prepackaged releases are available [in the Marath
 
 ##### Building from Source
 
-1.  To build Marathon from source, check out this repo and submodules and use sbt to build a JAR:
+1.  To build Marathon from source, check out this repo and use sbt to build a JAR:
 
-        git clone --recursive https://github.com/mesosphere/marathon.git
+        git clone https://github.com/mesosphere/marathon.git
         cd marathon
         sbt assembly
 
@@ -111,6 +111,7 @@ To develop on the web UI look into the instructions of the [Marathon UI](https:/
         marathon -M http://foo.bar:8080 start -i chronos -u https://s3.amazonaws.com/mesosphere-binaries-public/chronos/chronos.tgz \
             -C "./chronos/bin/demo ./chronos/config/nomail.yml \
             ./chronos/target/chronos-1.0-SNAPSHOT.jar" -c 1.0 -m 1024
+* [Ruby gem marathon_deploy](https://github.com/eBayClassifiedsGroup/marathon_deploy) alternative command line tool to deploy using json or yaml files with ENV macros.
 * [Scala client](https://github.com/guidewire/marathon-client), developed at Guidewire
 * [Java client](https://github.com/mohitsoni/marathon-client) by Mohit Soni
 * [Maven plugin](https://github.com/holidaycheck/marathon-maven-plugin), developed at [HolidayCheck](http://www.holidaycheck.com/)
@@ -127,6 +128,7 @@ Across all installations Marathon is managing applications on more than 100,000 
 
 * [Airbnb](https://www.airbnb.com/)
 * [Allegro Group](http://www.allegrogroup.com)
+* [AllUnite](http://allunite.com)
 * [Artirix](http://www.artirix.com/)
 * [Corvisa](https://www.corvisa.com/)
 * [bol.com](https://www.bol.com/)
@@ -193,3 +195,20 @@ the community.
 [upstart]: http://upstart.ubuntu.com/ "Ubuntu's event-based daemons"
 [init]: https://en.wikipedia.org/wiki/Init "init"
 [Mesosphere]: http://mesosphere.com/ "Mesosphere"
+
+## Acknowledgements
+
+**YourKit, LLC**
+
+![YourKit, LLC](https://www.yourkit.com/images/yklogo.png)
+
+YourKit supports open source projects with its full-featured Java
+Profiler.
+YourKit, LLC is the creator of <a
+href="https://www.yourkit.com/java/profiler/index.jsp">YourKit Java
+Profiler</a>
+and <a href="https://www.yourkit.com/.net/profiler/index.jsp">YourKit
+.NET Profiler</a>,
+innovative and intelligent tools for profiling Java and .NET
+applications.
+

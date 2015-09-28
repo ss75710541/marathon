@@ -5,23 +5,18 @@ import org.rogach.scallop.ScallopConf
 trait ReviveOffersConfig extends ScallopConf {
   //scalastyle:off magic.number
 
-  /**
-    * Separate disable option for --revive_offers_for_new_apps since there doesn't seem
-    * to be a syntax to disable a flag in Scallop.
-    */
-  lazy val disableReviveOffersForNewApps = opt[Boolean]("disable_revive_offers_for_new_apps",
-    descr = "Disable reviveOffers for new or changed apps. (Default: use reviveOffers) ",
-    default = Some(false))
-
-  lazy val reviveOffersForNewApps = opt[Boolean]("revive_offers_for_new_apps",
-    descr = "Whether to call reviveOffers for new or changed apps. " +
-      "(Default: use reviveOffers, disable with --disable_revive_offers_for_new_apps) ",
+  lazy val reviveOffersForNewApps = toggle("revive_offers_for_new_apps",
+    descrYes = "(Default) Call reviveOffers for new or changed apps.",
+    descrNo = "Disable reviveOffers for new or changed apps.",
     hidden = true,
-    default = Some(true))
-
-  lazy val shouldReviveOffersForNewApps = !disableReviveOffersForNewApps() && reviveOffersForNewApps()
+    default = Some(true),
+    prefix = "disable_")
 
   lazy val minReviveOffersInterval = opt[Long]("min_revive_offers_interval",
     descr = "Do not ask for all offers (also already seen ones) more often than this interval (ms).",
     default = Some(5000))
+
+  lazy val reviveOffersRepetitions = opt[Int]("revive_offers_repetitions",
+    descr = "Repeat every reviveOffer request this many times, delayed by the --min_revive_offers_interval.",
+    default = Some(3))
 }

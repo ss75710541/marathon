@@ -6,8 +6,10 @@ import com.codahale.metrics.MetricRegistry
 import com.google.common.collect.Lists
 import mesosphere.marathon.MarathonSpec
 import mesosphere.marathon.Protos.MarathonTask
+import mesosphere.marathon.core.base.ConstantClock
 import mesosphere.marathon.metrics.Metrics
 import mesosphere.marathon.state.PathId.StringPathId
+import mesosphere.marathon.state.Timestamp
 import mesosphere.mesos.protos.Implicits._
 import mesosphere.mesos.protos.TextAttribute
 import mesosphere.util.state.PersistentStore
@@ -16,13 +18,14 @@ import org.apache.mesos.Protos
 import org.apache.mesos.Protos.{ TaskID, TaskState, TaskStatus }
 import org.mockito.Matchers.any
 import org.mockito.Mockito.{ reset, spy, times, verify }
-import org.scalatest.Matchers
+import org.scalatest.{ GivenWhenThen, Matchers }
 import org.scalatest.concurrent.ScalaFutures
-import org.scalatest.concurrent.ScalaFutures._
+import mesosphere.FutureTestSupport._
 
 import scala.collection._
+import scala.concurrent.duration._
 
-class TaskTrackerTest extends MarathonSpec with Matchers {
+class TaskTrackerTest extends MarathonSpec with Matchers with GivenWhenThen {
 
   val TEST_APP_NAME = "foo".toRootPath
   val TEST_TASK_ID = "sampleTask"
@@ -473,5 +476,70 @@ class TaskTrackerTest extends MarathonSpec with Matchers {
     taskTracker.statusUpdate(TEST_APP_NAME, newStatus).futureValue
 
     verify(state, times(1)).update(any())
+  }
+
+  // sounds strange, but this is how it currently works: determineOverdueTasks will consider a missing startedAt to
+  // determine whether a task is in staging and might need to be killed if it exceeded the taskLaunchTimeout
+  test("ensure that determineOverdueTasks returns tasks disregarding the stagedAt property") {
+    import scala.language.implicitConversions
+    implicit def toMillis(timestamp: Timestamp): Long = timestamp.toDateTime.getMillis
+
+    val clock = ConstantClock(Timestamp.now())
+    val now = clock.now()
+
+    val overdueUnstagedTask = MarathonTask.newBuilder()
+      .setId("unstaged")
+      .build()
+    assert(overdueUnstagedTask.getStagedAt == 0, "The stagedAt property of an unstaged task has a value of 0")
+    assert(overdueUnstagedTask.getStartedAt == 0, "The startedAt property of an unstaged task has a value of 0")
+
+    val unconfirmedNotOverdueTask = MarathonTask.newBuilder()
+      .setId("unconfirmed")
+      .setStagedAt(now - config.taskLaunchConfirmTimeout().millis)
+      .build()
+
+    val unconfirmedOverdueTask = MarathonTask.newBuilder()
+      .setId("unconfirmedOverdue")
+      .setStagedAt(now - config.taskLaunchConfirmTimeout().millis - 1.millis)
+      .build()
+
+    val overdueStagedTask = MarathonTask.newBuilder()
+      .setId("overdueStagedTask")
+      // When using MarathonTasks.makeTask, this would be set to a made up value
+      // This test shall explicitly make sure that the task gets selected even if it is unlikely old
+      .setStagedAt(now - 10.days)
+      .setStatus(TaskStatus.newBuilder().setState(TaskState.TASK_STAGING).buildPartial())
+      .buildPartial()
+
+    val stagedTask = MarathonTask.newBuilder()
+      .setId("staged")
+      .setStatus(TaskStatus.newBuilder().setState(TaskState.TASK_STAGING).buildPartial())
+      .setStagedAt(now - 10.seconds)
+      .buildPartial()
+
+    val runningTask = MarathonTask.newBuilder()
+      .setId("running")
+      .setStatus(TaskStatus.newBuilder().setState(TaskState.TASK_RUNNING).buildPartial())
+      .setStagedAt(now - 5.seconds)
+      .setStartedAt(now - 2.seconds)
+      .buildPartial()
+
+    Given("Several somehow overdue tasks plus some not overdue tasks")
+    taskTracker.created(TEST_APP_NAME, unconfirmedOverdueTask)
+    taskTracker.created(TEST_APP_NAME, unconfirmedNotOverdueTask)
+    taskTracker.created(TEST_APP_NAME, overdueUnstagedTask)
+    taskTracker.created(TEST_APP_NAME, overdueStagedTask)
+    taskTracker.created(TEST_APP_NAME, stagedTask)
+    taskTracker.created(TEST_APP_NAME, runningTask)
+
+    When("We check which tasks should be killed because they're not yet staged or unconfirmed")
+    val overdueTasks = taskTracker.determineOverdueTasks(now)
+
+    Then("All somehow overdue tasks are returned")
+    assert(overdueTasks.map(_.getId).toSet ==
+      Set(overdueStagedTask, overdueUnstagedTask, unconfirmedOverdueTask).map(_.getId))
+
+    assert(overdueTasks.toSet ==
+      Set(overdueStagedTask, overdueUnstagedTask, unconfirmedOverdueTask))
   }
 }
