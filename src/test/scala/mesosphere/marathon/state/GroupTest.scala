@@ -1,9 +1,7 @@
 package mesosphere.marathon.state
 
-import javax.validation.ConstraintViolation
-
-import mesosphere.marathon.api.v2.ModelValidation
-import mesosphere.marathon.api.v2.json.V2Group
+import com.wix.accord._
+import mesosphere.marathon.api.v2.ValidationHelper
 import mesosphere.marathon.state.AppDefinition.VersionInfo
 import mesosphere.marathon.state.PathId._
 import org.scalatest.{ FunSpec, GivenWhenThen, Matchers }
@@ -60,7 +58,7 @@ class GroupTest extends FunSpec with GivenWhenThen with Matchers {
       val allowed = "/test/group2/a".toPath
       val updated = current.updateGroup { group =>
         if (group.id.includes(allowed)) Some(group) //child
-        else if (allowed.includes(group.id)) Some(group.copy(apps = Set.empty, dependencies = Set.empty)) //parent
+        else if (allowed.includes(group.id)) Some(group.copy(apps = Set.empty, dependencies = Set.empty)) //taskTrackerRef
         else None
       }
 
@@ -185,7 +183,7 @@ class GroupTest extends FunSpec with GivenWhenThen with Matchers {
       changed.transitiveApps.map(_.id.toString) should be(Set("/some/nested"))
 
       Then("the resulting group should be valid when represented in the V2 API model")
-      ModelValidation.checkGroup(V2Group(changed)) should be('empty)
+      validate(changed)(Group.validRootGroup(maxApps = None)) should be (Success)
     }
 
     it("cannot replace a group with apps by an app definition") {
@@ -215,9 +213,10 @@ class GroupTest extends FunSpec with GivenWhenThen with Matchers {
       changed.transitiveApps.map(_.id.toString) should be(Set("/some/nested", "/some/nested/path2/app"))
 
       Then("the conflict will be detected by our V2 API model validation")
-      val constraintViolations: Iterable[ConstraintViolation[V2Group]] = ModelValidation.checkGroup(V2Group(changed))
-      constraintViolations should be('nonEmpty)
-      constraintViolations.map(_.getMessage) should be(Set("Groups and Applications may not have the same identifier: /some/nested"))
+      val result = validate(changed)(Group.validRootGroup(maxApps = None))
+      result.isFailure should be(true)
+      ValidationHelper.getAllRuleConstrains(result).head
+        .message should be ("Groups and Applications may not have the same identifier.")
     }
 
     it("can marshal and unmarshal from to protos") {
@@ -374,6 +373,90 @@ class GroupTest extends FunSpec with GivenWhenThen with Matchers {
 
       Then("the cycle is detected")
       current.hasNonCyclicDependencies should equal(false)
+    }
+
+    it("can contain a path which has the same name multiple times in it") {
+      Given("a group with subgroups having the same name")
+      val reference: Group = Group("/".toPath, groups = Set(
+        Group("/test".toPath, groups = Set(
+          Group("/test/service".toPath, groups = Set(
+            Group("/test/service/test".toPath, Set(
+              AppDefinition("/test/service/test/app".toPath, cmd = Some("Foobar"))))
+          ))
+        ))
+      ))
+
+      When("App is updated")
+      val app = AppDefinition("/test/service/test/app".toPath, cmd = Some("Foobar"))
+      val group = Group(PathId("/"), Set(app))
+      val updatedGroup = group.updateApp(app.id, { a => app }, Timestamp.zero)
+      val ids = updatedGroup.transitiveGroups.map(_.id)
+
+      Then("All non existing subgroups should be created")
+      ids should equal(reference.transitiveGroups.map(_.id))
+    }
+
+    it("relative dependencies should be resolvable") {
+      Given("a group with an app having relative dependency")
+      val group: Group = Group("/".toPath, groups = Set(
+        Group("group".toPath, apps = Set(AppDefinition("app1".toPath, cmd = Some("foo"))),
+          groups = Set(
+            Group("subgroup".toPath, Set(
+              AppDefinition("app2".toPath, cmd = Some("bar"),
+                dependencies = Set("../app1".toPath))))
+          ))
+      ))
+
+      When("group is validated")
+      val result = validate(group)(Group.validRootGroup(maxApps = None))
+
+      Then("result should be a success")
+      result.isSuccess should be(true)
+    }
+
+    it("Group with app in wrong group is not valid") {
+      Given("Group with nested app of wrong path")
+      val invalid = Group(PathId.empty, groups = Set(
+        Group(PathId("nested"), apps = Set(
+          AppDefinition(PathId("/root"), cmd = Some("test"))
+        ))
+      ))
+
+      When("group is validated")
+      val invalidResult = validate(invalid)(Group.validRootGroup(maxApps = None))
+
+      Then("validation is not successful")
+      invalidResult.isSuccess should be(false)
+    }
+
+    it("Group with group in wrong group is not valid") {
+      Given("Group with nested app of wrong path")
+      val invalid = Group(PathId.empty, groups = Set(
+        Group(PathId("nested"), groups = Set(
+          Group(PathId("/root"))
+        ))
+      ))
+
+      When("group is validated")
+      val invalidResult = validate(invalid)(Group.validRootGroup(maxApps = None))
+
+      Then("validation is not successful")
+      invalidResult.isSuccess should be(false)
+    }
+
+    it("Group with app in correct group is valid") {
+      Given("Group with nested app of wrong path")
+      val valid = Group(PathId.empty, groups = Set(
+        Group(PathId("nested"), apps = Set(
+          AppDefinition(PathId("/nested/foo"), cmd = Some("test"))
+        ))
+      ))
+
+      When("group is validated")
+      val validResult = validate(valid)(Group.validRootGroup(maxApps = None))
+
+      Then("validation is successful")
+      validResult.isSuccess should be(true)
     }
   }
 }

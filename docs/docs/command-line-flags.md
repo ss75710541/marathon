@@ -37,11 +37,17 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     Comma separated list of allowed originating domains for HTTP requests.
     The origin(s) to allow in Marathon. Not set by default.
     Examples: `"*"`, or `"http://localhost:8888, http://domain.com"`.
-* <span class="label label-default">v0.12.0</span> `--[disable_]checkpoint` (Optional. Default: enabled):
+* <span class="label label-default">v0.13.0</span> `--[disable_]checkpoint` (Optional. Default: enabled):
     Enable checkpointing of tasks.
     Requires checkpointing enabled on slaves. Allows tasks to continue running
     during mesos-slave restarts and Marathon scheduler failover.  See the
     description of `--failover_timeout`.
+* <span class="label label-default">v1.0.0</span> `--enable_features` (Optional. Default: None):
+    Enable the selected features. Options to use:
+    - "vips" can be used to enable the networking VIP integration UI.
+    - "task\_killing" can be used to enable the TASK\_KILLING state in Mesos (0.28 or later)
+    - "external\_volumes" can be used if the cluster is configured to use external volumes.
+    Example: `--enable_features vips,task_killing,external_volumes`
 * `--executor` (Optional. Default: "//cmd"): Executor to use when none is
     specified.
 * `--failover_timeout` (Optional. Default: 604800 seconds (1 week)): The
@@ -49,19 +55,19 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     not re-registered with Mesos this long after a failover, Mesos will shut
     down all running tasks started by Marathon.  Requires checkpointing to be
     enabled.
-* `--framework_name` (Optional. Default: marathon-VERSION): The framework name
+* `--framework_name` (Optional. Default: marathon): The framework name
     to register with Mesos.
-* <span class="label label-default">v0.12.0</span> `--[disable_]ha` (Optional. Default: enabled):
+* <span class="label label-default">v0.13.0</span> `--[disable_]ha` (Optional. Default: enabled):
     Run Marathon in HA mode with leader election.
     Allows starting an arbitrary number of other Marathons but all need to be
-    started in HA mode. This mode requires a running ZooKeeper. See `--master`.
+    started in HA mode. This mode requires a running ZooKeeper.
 * `--hostname` (Optional. Default: hostname of machine): The advertised hostname
     that is used for the communication with the mesos master.
     The value is also stored in the persistent store so another standby host can redirect to the elected leader.
     _Note: Default is determined by
     [`InetAddress.getLocalHost`](http://docs.oracle.com/javase/7/docs/api/java/net/InetAddress.html#getLocalHost())._
 * `--webui_url` (Optional. Default: None): The url of the Marathon web ui. It
-    is passed to Mesos to be used in links back to the Marathon UI. If not set,
+    is passed to Mesos to be used in links back to the [Marathon UI]({{ site.baseurl }}/docs/marathon-ui.html). If not set,
     the url to the leading instance will be sent to Mesos.
 * <span class="label label-default">v0.9.0</span> `--leader_proxy_connection_timeout` (Optional. Default: 5000):
     Maximum time, in milliseconds, for connecting to the
@@ -87,30 +93,30 @@ The core functionality flags can be also set by environment variable `MARATHON_O
 * `--reconciliation_initial_delay` (Optional. Default: 15000 (15 seconds)): The
     delay, in milliseconds, before Marathon begins to periodically perform task
     reconciliation operations.
-* `--reconciliation_interval` (Optional. Default: 300000 (5 minutes)): The
+* `--reconciliation_interval` (Optional. Default: 600000 (10 minutes)): The
     period, in milliseconds, between task reconciliation operations.
 * `--scale_apps_initial_delay` (Optional. Default: 15000 (15 seconds)): The
     delay, in milliseconds, before Marathon begins to periodically perform
     application scaling operations.
 * `--scale_apps_interval` (Optional. Default: 300000 (5 minutes)): The period,
     in milliseconds, between application scaling operations.
-* `--task_launch_timeout` **DEPRECATED** (Optional. Default: 300000 (5 minutes)):
-    Time, in milliseconds, to wait for a task to enter the TASK_RUNNING state
-    before killing it. _Note: This is a temporary fix for MESOS-1922.
-    This option will be removed in a later release._
+* `--task_launch_timeout` (Optional. Default: 300000 (5 minutes)):
+    Time, in milliseconds, to wait for a task to enter the `TASK_RUNNING` state
+    before killing it.
 * `--event_subscriber` (Optional. Default: None): Event subscriber module to
     enable. Currently the only valid value is `http_callback`.
 * `--http_endpoints` (Optional. Default: None): Pre-configured http callback
     URLs. Valid only in conjunction with `--event_subscriber http_callback`.
     Additional callback URLs may also be set dynamically via the REST API.
-* `--zk` (Optional. Default: None): ZooKeeper URL for storing state.
+* `--zk` (Optional. Default: `zk://localhost:2181/marathon`): ZooKeeper URL for storing state.
     Format: `zk://host1:port1,host2:port2,.../path`
-* `--zk_max_versions` (Optional. Default: None): Limit the number of versions
-    stored for one entity.
+* `--zk_max_versions` (Optional. Default: 25): Limit the number of versions stored for one entity.
 * `--zk_timeout` (Optional. Default: 10000 (10 seconds)): Timeout for ZooKeeper
     in milliseconds.
 *  <span class="label label-default">v0.9.0</span> `--zk_session_timeout` (Optional. Default: 1.800.000 (30 minutes)): Timeout for ZooKeeper
     sessions in milliseconds.
+* <span class="label label-default">v1.1.2</span> `--zk_max_node_size` (Optional. Default: 1 MiB):
+    Maximum allowed ZooKeeper node size (in bytes).
 * `--mesos_authentication_principal` (Optional.): The Mesos principal used for
     authentication
 * `--mesos_authentication_secret_file` (Optional.): The path to the Mesos secret
@@ -120,13 +126,24 @@ The core functionality flags can be also set by environment variable `MARATHON_O
     elected.
     Format: `protocol://host:port/`
     _Note: When this option is set given url should always load balance to current Mesos master
-* `--marathon_store_timeout` (Optional. Default: 2000 (2 seconds)): Maximum time
+* <span class="label label-default">Deprecated</span>`--marathon_store_timeout` (Optional.): Maximum time
     in milliseconds, to wait for persistent storage operations to complete.
 * <span class="label label-default">v0.10.0</span> `--env_vars_prefix` (Optional. Default: None):
     The prefix to add to the name of task's environment variables created
     automatically by Marathon.
     _Note: This prefix will not be added to variables that are already prefixed,
     such as `MESOS_TASK_ID` and `MARATHON_APP_ID`
+* <span class="label label-default">v0.11.1</span> `--[disable_]zk_compression`  (Optional. Default: enabled):
+    Enable compression of zk nodes, if the size of the node is bigger than the configured threshold.
+* <span class="label label-default">v0.11.1</span> `--zk_compression_threshold` (Optional. Default:
+   64 KB): Threshold in bytes, when compression is applied to the zk node
+* <span class="label label-default">v0.11.1</span> `--max_apps` (Optional. Default: None):
+    The maximum number of applications that may be created.
+* <span class="label label-default">v0.13.0</span> `--store_cache` (Optional. Default: true): Enable an in memory cache for the storage layer.
+* <span class="label label-default">v0.13.0</span> `--on_elected_prepare_timeout` (Optional. Default: 3 minutes):
+    The timeout for preparing the Marathon instance when elected as leader.
+* <span class="label label-default">v0.14.1</span> `--http_event_callback_slow_consumer_timeout` (Optional. Default: 10 seconds):
+    A http event callback consumer is considered slow, if the delivery takes longer than this timeout.
 
 ## Tuning Flags for Offer Matching/Launching Tasks
 
@@ -135,6 +152,7 @@ available resources of a single node in the cluster. Before this <span class="la
 Marathon would only start a single task per
 resource offer, which led to slow task launching in smaller clusters.
 
+
 ### Marathon after 0.11.0 (including)
 
 In order to speed up task launching and use the
@@ -142,17 +160,17 @@ resource offers Marathon receives from Mesos more efficiently, we added a new of
 to start as many tasks as possible per task offer cycle. The maximum number of tasks to start on one offer is
 configurable with the following startup parameters:
 
-* <span class="label label-default">v0.8.2</span> `--max_tasks_per_offer` (Optional. Default: 1): Launch at most this
+* <span class="label label-default">v0.8.2</span> `--max_tasks_per_offer` (Optional. Default: 5): Launch at most this
     number of tasks per Mesos offer. Usually,
     there is one offer per cycle and slave. You can speed up launching tasks by increasing this number.
 
 To prevent overloading Mesos itself, you can also restrict how many tasks Marathon launches per time interval.
-By default, we allow 1000 unconfirmed task launches every 30 seconds. In addition, Marathon launches
+By default, we allow 100 unconfirmed task launches every 30 seconds. In addition, Marathon launches
 more tasks when it gets feedback about running and healthy tasks from Mesos.
 
 * <span class="label label-default">v0.11.0</span> `--launch_token_refresh_interval` (Optional. Default: 30000):
     The interval (ms) in which to refresh the launch tokens to `--launch_token_count`.
-* <span class="label label-default">v0.11.0</span> `--launch_tokens` (Optional. Default: 1000):
+* <span class="label label-default">v0.11.0</span> `--launch_tokens` (Optional. Default: 100):
     Launch tokens per interval.
 
 To prevent overloading Marathon and maintain speedy offer processing, there is a timeout for matching each
@@ -169,10 +187,10 @@ All launched tasks are stored before launching them. There is also a timeout for
     When reaching the timeout, only the tasks that we could save within the timeout are also launched.
     All other task launches are temporarily rejected and retried later.
 
-If the mesos master fails over or in other unusual circumstances, a launch task request might get lost.
+If the Mesos master fails over or in other unusual circumstances, a launch task request might get lost.
 You can configure how long Marathon waits for the first `TASK_STAGING` update.
 
-* <span class="label label-default">v0.11.0</span> `--task_launch_confirm_timeout` (Optional. Default: 10000):
+* <span class="label label-default">v0.11.0</span> `--task_launch_confirm_timeout` (Optional. Default: 300000 (5 minutes)):
   Time, in milliseconds, to wait for a task to enter the `TASK_STAGING` state before killing it.
 
 When the task launch requests in Marathon change because an app definition changes or a backoff delay is overdue,
@@ -209,7 +227,7 @@ resource offers Marathon receives from Mesos more efficiently, we added a new of
 to start as many tasks as possible per task offer cycle. The maximum number of tasks to start is configurable with
 the following startup parameters:
 
-* <span class="label label-default">v0.8.2</span> `--max_tasks_per_offer` (Optional. Default: 1): Launch at most this
+* <span class="label label-default">v0.8.2</span> `--max_tasks_per_offer` (Optional. Default: 5): Launch at most this
     number of tasks per Mesos offer. Usually,
     there is one offer per cycle and slave. You can speed up launching tasks by increasing this number.
 
@@ -221,8 +239,8 @@ the following startup parameters:
 **Example**
 
 Given a cluster with 200 nodes and the default settings for task launching. If we want to start 2000 tasks, it would
-take at least 10 cycles, because we are only starting 1 task per offer, leading to a total maximum of 200. If we
-change the `max_tasks_per_offer` setting to 10, we could start 1000 tasks per offer (the default setting for
+take at least 10 cycles, because we are only starting 1 task per offer (and hence 200 per cycle), leading to a total maximum of 200. If we
+change the `max_tasks_per_offer` setting to 10, we could start 1000 tasks per offer cycle (the default setting for
 `max_tasks_per_offer_cycle`), reducing the necessary cycles to 2. If we also adjust the `max_tasks_per_offer_cycle `
 to 2000, we could start all tasks in a single cycle (given we receive offers for all nodes).
 
@@ -264,18 +282,42 @@ The Web Site flags control the behavior of Marathon's web site, including the us
 * `--ssl_keystore_password` (Optional. Default: None): Password for the keystore
     supplied with the `ssl_keystore_path` option. Required if `ssl_keystore_path` is supplied.
     May also be specified with the `MESOSPHERE_KEYSTORE_PASS` environment variable.
+* `--leader_proxy_ssl_ignore_hostname` (Optional. Default: false): Do not
+    verify that the hostname of the Marathon leader matches the one in the SSL
+    certificate when proxying API requests to the current leader.
 *  <span class="label label-default">v0.10.0</span> `--http_max_concurrent_requests` (Optional.): the maximum number of
-    concurrent http requests, that is allowed concurrently before requests get answered directly with a
+    concurrent HTTP requests, that is allowed concurrently before requests get answered directly with a
     HTTP 503 Service Temporarily Unavailable.
+
+### Metrics Flags
+
+* <span class="label label-default">v0.13.0</span> `--[disable_]metrics` (Optional. Default: enabled):
+    Expose the execution time per method via the metrics endpoint (/metrics) using code instrumentation.
+    Enabling this might noticeably degrade performance but it helps finding performance problems.
+    These measurements can be disabled with --disable_metrics. Other metrics are not affected.
+* <span class="label label-default">v0.13.0</span> `--reporter_graphite` (Optional. Default: disabled):
+    Report metrics to [Graphite](http://graphite.wikidot.com) as defined by the given URL.
+    Example: `tcp://localhost:2003?prefix=marathon-test&interval=10`
+    The URL can have several parameters to refine the functionality.
+    * prefix: (Default: None) the prefix for all metrics
+    * interval: (Default: 10) the interval to report to graphite in seconds
+* <span class="label label-default">v0.13.0</span> `--reporter_datadog` (Optional. Default: disabled):
+    Report metrics to [Datadog](https://www.datadoghq.com) as defined by the given URL.
+    Either use UDP to talk to a datadog agent or HTTP to talk directly to DatadogHQ.
+    Example (UDP to agent): `udp://localhost:8125?prefix=marathon-test&tags=marathon&interval=10`
+    Example (HTTP to DataDogHQ): `http://datadog?apiKey=abc&prefix=marathon-test&tags=marathon&interval=10`
+    The URL can have several parameters to refine the functionality.
+    * expansions: (Default: all) which metric data should be expanded. can be a list of: count,meanRate,1MinuteRate,5MinuteRate,15MinuteRate,min,mean,max,stddev,median,p75,p95,p98,p99,p999
+    * interval: (Default: 10) the interval in seconds to report to Datadog
+    * prefix: (Default: marathon_test) the prefix is prepended to all metric names
+    * tags: (Default: empty) the tags to send with each metric. Can be either simple value like `foo` or key value like `foo:bla`
+    * apiKey: (Default: empty) the api key to use, when directly connecting to Datadog (HTTP)
 
 ### Debug Flags
 
 * <span class="label label-default">v0.8.2</span> `--logging_level` (Optional):
     Set the logging level of the application.
     Use one of `off`, `fatal`, `error`, `warn`, `info`, `debug`, `trace`, `all`.
-* <span class="label label-default">v0.12.0</span> `--[disable_]metrics` (Optional. Default: enabled):
-    Expose the execution time per method via the metrics endpoint.
-    This metrics measurement can be disabled with --disable_metrics.
-* <span class="label label-default">v0.12.0</span> `--[disable_]tracing` (Optional. Default: disabled):
+* <span class="label label-default">v0.13.0</span> `--[disable_]tracing` (Optional. Default: disabled):
     Enable tracing for all service method calls.
     Log a trace message around the execution of every service method.

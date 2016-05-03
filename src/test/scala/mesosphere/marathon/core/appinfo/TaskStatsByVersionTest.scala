@@ -1,11 +1,11 @@
 package mesosphere.marathon.core.appinfo
 
 import mesosphere.marathon.core.base.ConstantClock
+import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.health.Health
 import mesosphere.marathon.state.{ AppDefinition, Timestamp }
-import mesosphere.marathon.{ Protos, MarathonSpec }
+import mesosphere.marathon.{ MarathonTestHelper, MarathonSpec }
 import org.scalatest.{ Matchers, GivenWhenThen }
-import org.apache.mesos.{ Protos => mesos }
 import play.api.libs.json.Json
 import scala.concurrent.duration._
 
@@ -18,7 +18,7 @@ class TaskStatsByVersionTest extends MarathonSpec with GivenWhenThen with Matche
       now = now,
       versionInfo = versionInfo,
       tasks = Seq.empty,
-      statuses = Map.empty[String, Seq[Health]]
+      statuses = Map.empty[Task.Id, Seq[Health]]
     )
     Then("we get none")
     stats should be (
@@ -48,7 +48,7 @@ class TaskStatsByVersionTest extends MarathonSpec with GivenWhenThen with Matche
     ) ++ afterLastScalingTasks
 
     val tasks = outdatedTasks ++ afterLastConfigChangeTasks
-    val statuses = Map.empty[String, Seq[Health]]
+    val statuses = Map.empty[Task.Id, Seq[Health]]
 
     When("calculating stats")
     val stats = TaskStatsByVersion(
@@ -93,25 +93,13 @@ class TaskStatsByVersionTest extends MarathonSpec with GivenWhenThen with Matche
     lastConfigChangeAt = lastConfigChangeAt
   )
   private[this] var taskIdCounter = 0
-  private[this] def createTask(): Protos.MarathonTask.Builder = {
+  private[this] def newTaskId(): String = {
     taskIdCounter += 1
-    Protos.MarathonTask
-      .newBuilder()
-      .setId(s"task$taskIdCounter")
+    s"task$taskIdCounter"
   }
-
-  private[this] def statusForState(state: mesos.TaskState): mesos.TaskStatus = {
-    mesos.TaskStatus
-      .newBuilder()
-      .setState(state)
-      .buildPartial()
-  }
-  private[this] def runningTaskStartedAt(version: Timestamp, startingDelay: FiniteDuration): Protos.MarathonTask = {
+  private[this] def runningTaskStartedAt(version: Timestamp, startingDelay: FiniteDuration): Task = {
     val startedAt = (version + startingDelay).toDateTime.getMillis
-    createTask()
-      .setStatus(statusForState(mesos.TaskState.TASK_RUNNING))
-      .setVersion(version.toString)
-      .setStartedAt(startedAt)
-      .buildPartial()
+    MarathonTestHelper
+      .runningTask(newTaskId(), appVersion = version, startedAt = startedAt)
   }
 }

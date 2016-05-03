@@ -1,87 +1,77 @@
 package mesosphere.marathon.upgrade
 
-import akka.testkit.{ TestKit, TestActorRef }
-import akka.actor.{ Props, ActorSystem }
-import mesosphere.marathon.tasks.TaskTracker
-import mesosphere.marathon.upgrade.StoppingBehavior.SynchronizeTasks
-import org.scalatest.{ BeforeAndAfter, BeforeAndAfterAll, Matchers, FunSuiteLike }
-import org.apache.mesos.SchedulerDriver
-import org.scalatest.mock.MockitoSugar
-import mesosphere.marathon.Protos.MarathonTask
-import scala.collection.mutable
-import scala.concurrent.{ Await, Promise }
-import scala.concurrent.duration._
+import akka.actor.Props
+import akka.testkit.TestActorRef
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.event.MesosStatusUpdateEvent
-import org.mockito.Mockito._
-import org.apache.mesos.Protos.TaskID
-import mesosphere.marathon.TaskUpgradeCanceledException
 import mesosphere.marathon.state.{ AppDefinition, PathId }
+import mesosphere.marathon.test.{ Mockito, MarathonActorSupport }
+import mesosphere.marathon.upgrade.StoppingBehavior.KillNextBatch
+import mesosphere.marathon.{ MarathonTestHelper, TaskUpgradeCanceledException }
+import org.apache.mesos.SchedulerDriver
+import org.mockito.Mockito._
+import org.scalatest.{ BeforeAndAfter, BeforeAndAfterAll, FunSuiteLike, Matchers }
+
+import scala.collection.mutable
+import scala.concurrent.duration._
+import scala.concurrent.{ Await, Promise }
 
 class TaskKillActorTest
-    extends TestKit(ActorSystem("System"))
+    extends MarathonActorSupport
     with FunSuiteLike
     with Matchers
     with BeforeAndAfterAll
     with BeforeAndAfter
-    with MockitoSugar {
-
-  var taskTracker: TaskTracker = _
-  var driver: SchedulerDriver = _
-
-  before {
-    taskTracker = mock[TaskTracker]
-    driver = mock[SchedulerDriver]
-  }
-
-  override def afterAll(): Unit = {
-    super.afterAll()
-    system.shutdown()
-  }
+    with Mockito {
 
   test("Kill tasks") {
-    val taskA = MarathonTask.newBuilder().setId("taskA_id").build()
-    val taskB = MarathonTask.newBuilder().setId("taskB_id").build()
+    val f = new Fixture
+    val taskA = MarathonTestHelper.runningTask("taskA_id")
+    val taskB = MarathonTestHelper.runningTask("taskB_id")
 
-    val tasks = Set(taskA, taskB)
+    val tasks = Iterable(taskA, taskB)
     val promise = Promise[Unit]()
 
-    val ref = TestActorRef(Props(classOf[TaskKillActor], driver, PathId("/test"), taskTracker, system.eventStream, tasks, promise))
-
+    f.taskTracker.appTasksLaunchedSync(any) returns tasks
+    val ref = f.killActor(PathId("/test"), tasks.map(_.taskId), promise)
     watch(ref)
 
-    system.eventStream.publish(MesosStatusUpdateEvent("", taskA.getId, "TASK_KILLED", "", PathId.empty, "", Nil, ""))
-    system.eventStream.publish(MesosStatusUpdateEvent("", taskB.getId, "TASK_KILLED", "", PathId.empty, "", Nil, ""))
+    system.eventStream.publish(MesosStatusUpdateEvent("", taskA.taskId, "TASK_KILLED", "", PathId.empty, "", None, Nil, ""))
+    system.eventStream.publish(MesosStatusUpdateEvent("", taskB.taskId, "TASK_KILLED", "", PathId.empty, "", None, Nil, ""))
 
     Await.result(promise.future, 5.seconds) should be(())
-    verify(driver).killTask(TaskID.newBuilder().setValue(taskA.getId).build())
-    verify(driver).killTask(TaskID.newBuilder().setValue(taskB.getId).build())
+    verify(f.driver).killTask(taskA.taskId.mesosTaskId)
+    verify(f.driver).killTask(taskB.taskId.mesosTaskId)
 
     expectTerminated(ref)
   }
 
   test("Kill tasks with empty task list") {
-    val tasks = Set[MarathonTask]()
+    val f = new Fixture
+    val tasks = Iterable.empty[Task]
     val promise = Promise[Unit]()
 
-    val ref = TestActorRef(Props(classOf[TaskKillActor], driver, PathId("/test"), taskTracker, system.eventStream, tasks, promise))
-
+    f.taskTracker.appTasksLaunchedSync(any) returns Iterable.empty
+    val ref = f.killActor(PathId("/test"), tasks.map(_.taskId), promise)
     watch(ref)
 
     Await.result(promise.future, 5.seconds) should be(())
 
-    verifyZeroInteractions(driver)
+    verifyZeroInteractions(f.driver)
     expectTerminated(ref)
   }
 
   test("Cancelled") {
-    val taskA = MarathonTask.newBuilder().setId("taskA_id").build()
-    val taskB = MarathonTask.newBuilder().setId("taskB_id").build()
+    val f = new Fixture
+    val taskA = MarathonTestHelper.runningTask("taskA_id")
+    val taskB = MarathonTestHelper.runningTask("taskB_id")
 
-    val tasks = Set(taskA, taskB)
+    val tasks = Iterable(taskA, taskB)
     val promise = Promise[Unit]()
 
-    val ref = system.actorOf(Props(classOf[TaskKillActor], driver, PathId("/test"), taskTracker, system.eventStream, tasks, promise))
-
+    f.taskTracker.appTasksLaunchedSync(any) returns tasks
+    val ref = f.killActor(PathId("/test"), tasks.map(_.taskId), promise)
     watch(ref)
 
     system.stop(ref)
@@ -94,21 +84,21 @@ class TaskKillActorTest
   }
 
   test("Task synchronization") {
+    val f = new Fixture
     val app = AppDefinition(id = PathId("/app"), instances = 2)
     val promise = Promise[Unit]()
-    val taskA = MarathonTask.newBuilder().setId("taskA_id").build()
-    val taskB = MarathonTask.newBuilder().setId("taskB_id").build()
-    val tasks = mutable.Set(taskA, taskB)
+    val taskA = MarathonTestHelper.runningTask("taskA_id")
+    val taskB = MarathonTestHelper.runningTask("taskB_id")
+    val tasks = mutable.Iterable(taskA, taskB)
 
-    when(taskTracker.get(app.id))
-      .thenReturn(Set.empty[MarathonTask])
-
-    val ref = TestActorRef[TaskKillActor](Props(classOf[TaskKillActor], driver, app.id, taskTracker, system.eventStream, tasks.toSet, promise))
+    f.taskTracker.appTasksLaunchedSync(any) returns tasks
+    val ref = f.killActor(app.id, tasks.map(_.taskId), promise)
     watch(ref)
 
     ref.underlyingActor.periodicalCheck.cancel()
 
-    ref ! SynchronizeTasks
+    f.taskTracker.appTasksLaunchedSync(any) returns Iterable.empty
+    ref ! KillNextBatch
 
     Await.result(promise.future, 5.seconds) should be(())
 
@@ -116,30 +106,42 @@ class TaskKillActorTest
   }
 
   test("Send kill again after synchronization with task tracker") {
-    val taskA = MarathonTask.newBuilder().setId("taskA_id").build()
-    val taskB = MarathonTask.newBuilder().setId("taskB_id").build()
+    val f = new Fixture
+    val taskA = MarathonTestHelper.runningTask("taskA_id")
+    val taskB = MarathonTestHelper.runningTask("taskB_id")
     val appId = PathId("/test")
 
-    val tasks = Set(taskA, taskB)
+    val tasks = Iterable(taskA, taskB)
     val promise = Promise[Unit]()
 
-    val ref = TestActorRef[TaskKillActor](Props(classOf[TaskKillActor], driver, appId, taskTracker, system.eventStream, tasks, promise))
-
-    when(taskTracker.get(appId)).thenReturn(Set(taskA, taskB))
-
+    f.taskTracker.appTasksLaunchedSync(any) returns tasks
+    val ref = f.killActor(appId, tasks.map(_.taskId), promise)
     watch(ref)
 
     ref.underlyingActor.periodicalCheck.cancel()
+    ref ! KillNextBatch
 
-    ref ! SynchronizeTasks
-
-    system.eventStream.publish(MesosStatusUpdateEvent("", taskA.getId, "TASK_KILLED", "", PathId.empty, "", Nil, ""))
-    system.eventStream.publish(MesosStatusUpdateEvent("", taskB.getId, "TASK_KILLED", "", PathId.empty, "", Nil, ""))
+    system.eventStream.publish(MesosStatusUpdateEvent("", taskA.taskId, "TASK_KILLED", "", PathId.empty, "", None, Nil, ""))
+    system.eventStream.publish(MesosStatusUpdateEvent("", taskB.taskId, "TASK_KILLED", "", PathId.empty, "", None, Nil, ""))
 
     Await.result(promise.future, 5.seconds) should be(())
-    verify(driver, times(2)).killTask(TaskID.newBuilder().setValue(taskA.getId).build())
-    verify(driver, times(2)).killTask(TaskID.newBuilder().setValue(taskB.getId).build())
+    verify(f.driver, times(2)).killTask(taskA.launchedMesosId.get)
+    verify(f.driver, times(2)).killTask(taskB.launchedMesosId.get)
 
     expectTerminated(ref)
+  }
+
+  class Fixture {
+    val conf = mock[UpgradeConfig]
+    val taskTracker: TaskTracker = mock[TaskTracker]
+    val driver: SchedulerDriver = mock[SchedulerDriver]
+    val config: UpgradeConfig = mock[UpgradeConfig]
+
+    config.killBatchCycle returns 30.seconds
+    config.killBatchSize returns 100
+
+    def killActor(appId: PathId, tasks: Iterable[Task.Id], promise: Promise[Unit]) = {
+      TestActorRef[TaskKillActor](TaskKillActor.props(driver, appId, taskTracker, system.eventStream, tasks, config, promise))
+    }
   }
 }

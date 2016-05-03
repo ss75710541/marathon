@@ -10,8 +10,6 @@ import scala.concurrent.Future
 
 class SubscribersKeeperActor(val store: EntityStore[EventSubscribers]) extends Actor with ActorLogging {
 
-  implicit val ec = HttpEventModule.executionContext
-
   override def receive: Receive = {
 
     case event @ Subscribe(_, callbackUrl, _, _) =>
@@ -20,10 +18,11 @@ class SubscribersKeeperActor(val store: EntityStore[EventSubscribers]) extends A
       val subscription: Future[MarathonSubscriptionEvent] =
         addResult.map { subscribers =>
           if (subscribers.urls.contains(callbackUrl))
-            log.info("Callback [%s] subscribed." format callbackUrl)
+            log.info("Callback {} subscribed.", callbackUrl)
           event
-        }
+        }(context.dispatcher)
 
+      import context.dispatcher
       subscription pipeTo sender()
 
     case event @ Unsubscribe(_, callbackUrl, _, _) =>
@@ -32,15 +31,17 @@ class SubscribersKeeperActor(val store: EntityStore[EventSubscribers]) extends A
       val subscription: Future[MarathonSubscriptionEvent] =
         removeResult.map { subscribers =>
           if (!subscribers.urls.contains(callbackUrl))
-            log.info("Callback [%s] unsubscribed." format callbackUrl)
+            log.info("Callback {} unsubscribed.", callbackUrl)
           event
-        }
+        }(context.dispatcher)
 
+      import context.dispatcher
       subscription pipeTo sender()
 
     case GetSubscribers =>
-      val subscription = store.fetch(Subscribers).map(_.getOrElse(EventSubscribers()))
+      val subscription = store.fetch(Subscribers).map(_.getOrElse(EventSubscribers()))(context.dispatcher)
 
+      import context.dispatcher
       subscription pipeTo sender()
   }
 
@@ -48,7 +49,7 @@ class SubscribersKeeperActor(val store: EntityStore[EventSubscribers]) extends A
     store.modify(Subscribers) { deserialize =>
       val existingSubscribers = deserialize()
       if (existingSubscribers.urls.contains(callbackUrl)) {
-        log.info("Existing callback [%s] resubscribed." format callbackUrl)
+        log.info("Existing callback {} resubscribed.", callbackUrl)
         existingSubscribers
       }
       else EventSubscribers(existingSubscribers.urls + callbackUrl)
@@ -62,7 +63,7 @@ class SubscribersKeeperActor(val store: EntityStore[EventSubscribers]) extends A
         EventSubscribers(existingSubscribers.urls - callbackUrl)
 
       else {
-        log.warning("Attempted to unsubscribe nonexistent callback [%s]." format callbackUrl)
+        log.warning("Attempted to unsubscribe nonexistent callback {}", callbackUrl)
         existingSubscribers
       }
     }

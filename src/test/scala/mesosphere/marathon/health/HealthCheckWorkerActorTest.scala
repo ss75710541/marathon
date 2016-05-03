@@ -1,29 +1,31 @@
 package mesosphere.marathon.health
 
-import java.net.{ ServerSocket, InetAddress }
+import java.net.{ InetAddress, ServerSocket }
 
-import akka.actor.{ Props, ActorSystem }
-import akka.testkit.{ ImplicitSender, TestActorRef, TestKit }
+import akka.actor.Props
+import akka.testkit.{ ImplicitSender, TestActorRef }
 import mesosphere.marathon.Protos.HealthCheckDefinition.Protocol
-import mesosphere.marathon.{ Protos, MarathonSpec }
-import org.scalatest.{ BeforeAndAfterAll, Matchers }
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.state.AppDefinition
+import mesosphere.marathon.state.PathId._
+import mesosphere.marathon.test.MarathonActorSupport
+import mesosphere.marathon.{ MarathonSpec, MarathonTestHelper }
+import org.scalatest.Matchers
 
-import scala.concurrent.{ Await, Future }
+import scala.collection.immutable.Seq
 import scala.concurrent.duration._
+import scala.concurrent.{ Await, Future }
 
 class HealthCheckWorkerActorTest
-    extends TestKit(ActorSystem("System"))
+    extends MarathonActorSupport
     with ImplicitSender
     with MarathonSpec
-    with Matchers
-    with BeforeAndAfterAll {
+    with Matchers {
 
-  import mesosphere.util.ThreadPoolContext.context
   import HealthCheckWorker._
+  import MarathonTestHelper.Implicits._
 
-  override def afterAll {
-    TestKit.shutdownActorSystem(system)
-  }
+  import scala.concurrent.ExecutionContext.Implicits.global
 
   test("A TCP health check should correctly resolve the hostname") {
     val socket = new ServerSocket(0)
@@ -33,16 +35,14 @@ class HealthCheckWorkerActorTest
       socket.accept().close()
     }
 
-    val task = Protos.MarathonTask
-      .newBuilder
-      .setHost(InetAddress.getLocalHost.getCanonicalHostName)
-      .setId("test_id")
-      .addPorts(socketPort)
-      .build()
+    val task =
+      MarathonTestHelper.runningTask("test_id")
+        .withAgentInfo(_.copy(host = InetAddress.getLocalHost.getCanonicalHostName))
+        .withHostPorts(Seq(socketPort))
 
     val ref = TestActorRef[HealthCheckWorkerActor](Props(classOf[HealthCheckWorkerActor]))
-
-    ref ! HealthCheckJob(task, HealthCheck(protocol = Protocol.TCP))
+    val app = AppDefinition(id = "test_id".toPath)
+    ref ! HealthCheckJob(app, task, task.launched.get, HealthCheck(protocol = Protocol.TCP, portIndex = Some(0)))
 
     try { Await.result(res, 1.seconds) }
     finally { socket.close() }
@@ -60,16 +60,14 @@ class HealthCheckWorkerActorTest
       socket.accept().close()
     }
 
-    val task = Protos.MarathonTask
-      .newBuilder
-      .setHost(InetAddress.getLocalHost.getCanonicalHostName)
-      .setId("test_id")
-      .addPorts(socketPort)
-      .build()
+    val task =
+      MarathonTestHelper.runningTask("test_id")
+        .withAgentInfo(_.copy(host = InetAddress.getLocalHost.getCanonicalHostName))
+        .withHostPorts(Seq(socketPort))
 
     val ref = TestActorRef[HealthCheckWorkerActor](Props(classOf[HealthCheckWorkerActor]))
-
-    ref ! HealthCheckJob(task, HealthCheck(protocol = Protocol.TCP))
+    val app = AppDefinition(id = "test_id".toPath)
+    ref ! HealthCheckJob(app, task, task.launched.get, HealthCheck(protocol = Protocol.TCP, portIndex = Some(0)))
 
     try { Await.result(res, 1.seconds) }
     finally { socket.close() }
@@ -81,5 +79,4 @@ class HealthCheckWorkerActorTest
     watch(ref)
     expectTerminated(ref)
   }
-
 }

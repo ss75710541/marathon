@@ -1,100 +1,78 @@
 package mesosphere.marathon.core.task.bus
 
-import mesosphere.marathon.core.task.bus.TaskStatusObservables.TaskStatusUpdate
+import mesosphere.marathon.MarathonTestHelper
+import mesosphere.marathon.core.task.bus.TaskChangeObservables.TaskChanged
+import mesosphere.marathon.core.task.{ Task, TaskStateChange, TaskStateOp }
 import mesosphere.marathon.state.{ PathId, Timestamp }
-import mesosphere.marathon.tasks.TaskIdUtil
-import org.apache.mesos.Protos.TaskID
+import org.apache.mesos.Protos.{ TaskStatus, TaskState }
 import org.joda.time.DateTime
 
-class TaskStatusUpdateTestHelper(val wrapped: TaskStatusUpdate) {
-  def withTaskId(taskId: String): TaskStatusUpdateTestHelper = {
-    withTaskId(TaskID.newBuilder().setValue(taskId).build())
+class TaskStatusUpdateTestHelper(val wrapped: TaskChanged) {
+  def simpleName = wrapped.stateOp match {
+    case TaskStateOp.MesosUpdate(_, MarathonTaskStatus.WithMesosStatus(mesosStatus), _) =>
+      mesosStatus.getState.toString
+    case _ => wrapped.stateOp.getClass.getSimpleName
   }
-
-  def withTaskId(taskId: TaskID): TaskStatusUpdateTestHelper = TaskStatusUpdateTestHelper {
-    wrapped.copy(taskId = taskId)
-  }
-
-  def withAppId(appId: String): TaskStatusUpdateTestHelper = {
-    withTaskId(TaskStatusUpdateTestHelper.newTaskID(appId))
-  }
-
-  def withStatus(status: MarathonTaskStatus): TaskStatusUpdateTestHelper = TaskStatusUpdateTestHelper {
-    wrapped.copy(status = status)
+  def status = wrapped.stateOp match {
+    case TaskStateOp.MesosUpdate(_, MarathonTaskStatus.WithMesosStatus(mesosStatus), _) => mesosStatus
+    case _ => throw new scala.RuntimeException("the wrapped stateOp os no MesosUpdate!")
   }
 }
 
 object TaskStatusUpdateTestHelper {
-  def apply(update: TaskStatusUpdate): TaskStatusUpdateTestHelper =
-    new TaskStatusUpdateTestHelper(update)
+  def apply(taskChanged: TaskChanged): TaskStatusUpdateTestHelper =
+    new TaskStatusUpdateTestHelper(taskChanged)
 
   private def newTaskID(appId: String) = {
-    TaskIdUtil.newTaskId(PathId(appId))
+    Task.Id.forApp(PathId(appId))
   }
 
   val taskId = newTaskID("/app")
+  lazy val defaultTask = MarathonTestHelper.stagedTask(taskId.idString)
+  lazy val defaultTimestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 30, 0, 0))
 
-  val running = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 30, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.running
-    )
-  )
+  def taskLaunchFor(task: Task, timestamp: Timestamp = defaultTimestamp) = {
+    val taskStateOp = TaskStateOp.LaunchEphemeral(task)
+    val taskStateChange = task.update(taskStateOp)
+    TaskStatusUpdateTestHelper(TaskChanged(taskStateOp, taskStateChange))
+  }
 
-  val runningHealthy = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 30, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.runningHealthy
-    )
-  )
+  def taskUpdateFor(task: Task, taskStatus: MarathonTaskStatus, timestamp: Timestamp = defaultTimestamp) = {
+    val taskStateOp = TaskStateOp.MesosUpdate(task, taskStatus, timestamp)
+    val taskStateChange = task.update(taskStateOp)
+    TaskStatusUpdateTestHelper(TaskChanged(taskStateOp, taskStateChange))
+  }
 
-  val runningUnhealthy = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 30, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.runningUnhealthy
-    )
-  )
+  def taskExpungeFor(task: Task, taskStatus: MarathonTaskStatus, timestamp: Timestamp = defaultTimestamp) = {
+    TaskStatusUpdateTestHelper(
+      TaskChanged(
+        TaskStateOp.MesosUpdate(task, taskStatus, timestamp),
+        TaskStateChange.Expunge(task)))
+  }
 
-  val staging = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 31, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.staging
-    )
-  )
+  def makeTaskStatus(task: Task, state: TaskState, maybeHealth: Option[Boolean] = None) = {
+    val mesosStatus = TaskStatus.newBuilder
+      .setTaskId(task.taskId.mesosTaskId)
+      .setState(state)
+    maybeHealth.foreach(mesosStatus.setHealthy)
+    MarathonTaskStatus(mesosStatus.build())
+  }
 
-  val finished = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 31, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.finished
-    )
-  )
+  def running(task: Task = defaultTask) = taskUpdateFor(task, makeTaskStatus(task, TaskState.TASK_RUNNING))
 
-  val lost = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 31, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.lost
-    )
-  )
+  def runningHealthy(task: Task = defaultTask) = taskUpdateFor(task, makeTaskStatus(task, TaskState.TASK_RUNNING, maybeHealth = Some(true)))
 
-  val killed = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 31, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.killed
-    )
-  )
+  def runningUnhealthy(task: Task = defaultTask) = taskUpdateFor(task, makeTaskStatus(task, TaskState.TASK_RUNNING, maybeHealth = Some(false)))
 
-  val error = TaskStatusUpdateTestHelper(
-    TaskStatusUpdate(
-      timestamp = Timestamp.apply(new DateTime(2015, 2, 3, 12, 31, 0, 0)),
-      taskId = taskId,
-      status = MarathonTaskStatusTestHelper.error
-    )
-  )
+  def staging(task: Task = defaultTask) = taskUpdateFor(task, makeTaskStatus(task, TaskState.TASK_STAGING))
+
+  def finished(task: Task = defaultTask) = taskExpungeFor(task, makeTaskStatus(task, TaskState.TASK_FINISHED))
+
+  def lost(task: Task = defaultTask) = taskExpungeFor(task, makeTaskStatus(task, TaskState.TASK_LOST))
+
+  def killed(task: Task = defaultTask) = taskExpungeFor(task, makeTaskStatus(task, TaskState.TASK_KILLED))
+
+  def killing(task: Task = defaultTask) = taskUpdateFor(task, makeTaskStatus(task, TaskState.TASK_KILLING))
+
+  def error(task: Task = defaultTask) = taskExpungeFor(task, makeTaskStatus(task, TaskState.TASK_ERROR))
 }

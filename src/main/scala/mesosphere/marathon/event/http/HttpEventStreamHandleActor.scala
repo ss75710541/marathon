@@ -55,14 +55,16 @@ class HttpEventStreamHandleActor(
 
   private[this] def sendAllMessages(): Unit = {
     if (outstanding.nonEmpty) {
-      implicit val ec = ThreadPoolContext.context
       val toSend = outstanding.reverse
       outstanding = List.empty[MarathonEvent]
       context.become(stashEvents)
-      Future {
+      val sendFuture = Future {
         toSend.foreach(event => handle.sendEvent(event.eventType, Json.stringify(eventToJson(event))))
         WorkDone
-      } pipeTo self
+      }(ThreadPoolContext.ioContext)
+
+      import context.dispatcher
+      sendFuture pipeTo self
     }
     else {
       context.become(waitForEvent)
@@ -76,11 +78,11 @@ class HttpEventStreamHandleActor(
       //Do not act any longer on any event.
       context.become(Actor.emptyBehavior)
     case _ =>
-      log.warning(s"Could not send message to $handle", ex)
+      log.warning("Could not send message to {} reason: {}", handle, ex)
   }
 
   private[this] def dropEvent(event: MarathonEvent): Unit = {
-    log.warning(s"Ignore event $event for handle $handle (slow consumer)")
+    log.warning("Ignore event {} for handle {} (slow consumer)", event, handle)
   }
 }
 

@@ -38,14 +38,16 @@ class InfoResource @Inject() (
     "webui_url" -> config.webuiUrl.get,
     "mesos_role" -> config.mesosRole.get,
     "task_launch_timeout" -> config.taskLaunchTimeout.get,
+    "task_reservation_timeout" -> config.taskReservationTimeout.get,
     "reconciliation_initial_delay" -> config.reconciliationInitialDelay.get,
     "reconciliation_interval" -> config.reconciliationInterval.get,
-    "marathon_store_timeout" -> config.marathonStoreTimeout.get,
     "mesos_user" -> config.mesosUser.get,
     "leader_proxy_connection_timeout_ms" -> config.leaderProxyConnectionTimeout.get,
-    "leader_proxy_read_timeout_ms" -> config.leaderProxyReadTimeout.get)
+    "leader_proxy_read_timeout_ms" -> config.leaderProxyReadTimeout.get,
+    "features" -> config.availableFeatures
+  )
 
-  // Zookeeper congiurations
+  // ZooKeeper congiurations
   private[this] lazy val zookeeperConfigValues = Json.obj(
     "zk" -> config.zooKeeperUrl(),
     "zk_timeout" -> config.zooKeeperTimeout(),
@@ -69,7 +71,6 @@ class InfoResource @Inject() (
   }
 
   private[this] lazy val httpConfigValues = Json.obj(
-    "assets_path" -> config.assetsFileSystemPath.get,
     "http_port" -> config.httpPort.get,
     "https_port" -> config.httpsPort.get
   )

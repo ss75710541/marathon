@@ -5,11 +5,14 @@ import javax.inject.Named
 import akka.actor.ActorSystem
 import akka.event.EventStream
 import com.google.inject.{ AbstractModule, Inject, Provides, Singleton }
+import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.health.HealthCheck
 import mesosphere.marathon.state.{ AppDefinition, PathId, Timestamp }
 import mesosphere.marathon.upgrade.{ DeploymentPlan, DeploymentStep }
 import org.rogach.scallop.ScallopConf
 import org.slf4j.LoggerFactory
+
+import scala.collection.immutable.Seq
 
 //scalastyle:off number.of.types
 
@@ -22,7 +25,7 @@ trait EventSubscriber[C <: ScallopConf, M <: AbstractModule] {
 trait EventConfiguration extends ScallopConf {
 
   lazy val eventSubscriber = opt[String]("event_subscriber",
-    descr = "e.g. http_callback",
+    descr = "The event subscription module to use. E.g. http_callback.",
     required = false,
     noshort = true)
 }
@@ -136,7 +139,7 @@ case class RemoveHealthCheck(
 
 case class FailedHealthCheck(
   appId: PathId,
-  taskId: String,
+  taskId: Task.Id,
   healthCheck: HealthCheck,
   eventType: String = "failed_health_check_event",
   timestamp: String = Timestamp.now().toString)
@@ -144,12 +147,22 @@ case class FailedHealthCheck(
 
 case class HealthStatusChanged(
   appId: PathId,
-  taskId: String,
-  version: String,
+  taskId: Task.Id,
+  version: Timestamp,
   alive: Boolean,
   eventType: String = "health_status_changed_event",
   timestamp: String = Timestamp.now().toString)
     extends MarathonHealthCheckEvent
+
+case class UnhealthyTaskKillEvent(
+  appId: PathId,
+  taskId: Task.Id,
+  version: Timestamp,
+  reason: String,
+  host: String,
+  slaveId: Option[String],
+  eventType: String = "unhealthy_task_kill_event",
+  timestamp: String = Timestamp.now().toString) extends MarathonHealthCheckEvent
 
 // upgrade messages
 
@@ -207,12 +220,13 @@ case class AppTerminatedEvent(
 
 case class MesosStatusUpdateEvent(
   slaveId: String,
-  taskId: String,
+  taskId: Task.Id,
   taskStatus: String,
   message: String,
   appId: PathId,
   host: String,
-  ports: Iterable[Integer],
+  ipAddresses: Option[Seq[org.apache.mesos.Protos.NetworkInfo.IPAddress]],
+  ports: Seq[Int],
   version: String,
   eventType: String = "status_update_event",
   timestamp: String = Timestamp.now().toString) extends MarathonEvent

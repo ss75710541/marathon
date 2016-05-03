@@ -1,18 +1,22 @@
 package mesosphere.marathon.event
 
-import akka.actor.{ ActorRef, ActorSystem, Props }
-import akka.testkit.{ ImplicitSender, TestActorRef, TestKit }
+import akka.actor.{ ActorRef, Props }
+import akka.testkit.{ ImplicitSender, TestActorRef }
 import mesosphere.marathon.MarathonSpec
+import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.state.PathId._
 import mesosphere.marathon.state.{ TaskFailure, TaskFailureRepository, Timestamp }
-import org.apache.mesos.Protos.TaskState
+import mesosphere.marathon.test.MarathonActorSupport
+import org.apache.mesos.Protos.{ NetworkInfo, TaskState }
 import org.mockito.Matchers.any
 import org.mockito.Mockito._
 import org.scalatest.mock.MockitoSugar
 import org.scalatest.{ BeforeAndAfterAll, Matchers }
 
+import scala.collection.immutable.Seq
+
 class HistoryActorTest
-    extends TestKit(ActorSystem("System"))
+    extends MarathonActorSupport
     with MarathonSpec
     with MockitoSugar
     with BeforeAndAfterAll
@@ -79,14 +83,43 @@ class HistoryActorTest
     verify(failureRepo, times(0)).store(any(), any())
   }
 
-  private def statusMessage(state: TaskState) = MesosStatusUpdateEvent(
-    slaveId = "slaveId",
-    taskId = "taskId",
-    taskStatus = state.name(),
-    message = "message",
-    appId = "appId".toPath,
-    host = "host",
-    ports = Nil,
-    version = Timestamp.now().toString
-  )
+  test("Store UnhealthyTaskKilled") {
+    val message = unhealthyTaskKilled()
+    historyActor ! message
+
+    verify(failureRepo).store(message.appId, TaskFailure.FromUnhealthyTaskKillEvent(message))
+  }
+
+  private def statusMessage(state: TaskState) = {
+    val ipAddress: NetworkInfo.IPAddress =
+      NetworkInfo.IPAddress
+        .newBuilder()
+        .setIpAddress("123.123.123.123")
+        .setProtocol(NetworkInfo.Protocol.IPv4)
+        .build()
+
+    MesosStatusUpdateEvent(
+      slaveId = "slaveId",
+      taskId = Task.Id("taskId"),
+      taskStatus = state.name(),
+      message = "message",
+      appId = "appId".toPath,
+      host = "host",
+      ipAddresses = Some(Seq(ipAddress)),
+      ports = Nil,
+      version = Timestamp.now().toString
+    )
+  }
+
+  private def unhealthyTaskKilled() = {
+    val taskId = Task.Id("taskId")
+    UnhealthyTaskKillEvent(
+      appId = StringPathId("app").toPath,
+      taskId = taskId,
+      version = Timestamp(1024),
+      reason = "unknown",
+      host = "localhost",
+      slaveId = None
+    )
+  }
 }

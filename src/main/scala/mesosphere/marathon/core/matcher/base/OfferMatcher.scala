@@ -1,15 +1,24 @@
 package mesosphere.marathon.core.matcher.base
 
-import mesosphere.marathon.Protos.MarathonTask
-import mesosphere.marathon.state.Timestamp
-import org.apache.mesos.Protos.{ Offer, OfferID, TaskInfo }
+import mesosphere.marathon.core.launcher.TaskOp
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.state.{ PathId, Timestamp }
+import org.apache.mesos.{ Protos => Mesos }
 
 import scala.concurrent.Future
 
 object OfferMatcher {
-  case class TaskWithSource(source: TaskLaunchSource, taskInfo: TaskInfo, marathonTask: MarathonTask) {
-    def accept(): Unit = source.taskLaunchAccepted(taskInfo)
-    def reject(reason: String): Unit = source.taskLaunchRejected(taskInfo, reason)
+
+  /**
+    * A TaskOp with a [[TaskOpSource]].
+    *
+    * The [[TaskOpSource]] is informed whether the op is ultimately send to Mesos or if it is rejected
+    * (e.g. by throttling logic).
+    */
+  case class TaskOpWithSource(source: TaskOpSource, op: TaskOp) {
+    def taskId: Task.Id = op.taskId
+    def accept(): Unit = source.taskOpAccepted(op)
+    def reject(reason: String): Unit = source.taskOpRejected(op, reason)
   }
 
   /**
@@ -17,25 +26,43 @@ object OfferMatcher {
     * could not match the offer in any way it should simply leave the tasks
     * collection empty.
     *
-    * To increase fairness between matchers, each normal matcher should only launch as
-    * few tasks as possible per offer -- usually one. Multiple tasks could be used
-    * if the tasks need to be colocated. The OfferMultiplexer tries to summarize suitable
+    * To increase fairness between matchers, each normal matcher should schedule as few operations
+    * as possible per offer per match, e.g. one for task launches without reservations. Multiple launches could be used
+    * if the tasks need to be colocated or if the operations are intrinsically dependent on each other.
+    * The OfferMultiplexer tries to summarize suitable
     * matches from multiple offer matches into one response.
     *
-    * A MatchedTasks reply does not guarantee that these tasks can actually be launched.
+    * A MatchedTaskOps reply does not guarantee that these operations can actually be executed.
     * The launcher of message should setup some kind of timeout mechanism and handle
-    * taskLaunchAccepted/taskLaunchRejected calls appropriately.
+    * taskOpAccepted/taskOpRejected calls appropriately.
     *
     * @param offerId the identifier of the offer
-    * @param tasks the tasks that should be launched on that offer
+    * @param opsWithSource the ops that should be executed on that offer including the source of each op
     * @param resendThisOffer true, if this offer could not be processed completely (e.g. timeout)
     *                        and should be resend and processed again
     */
-  case class MatchedTasks(offerId: OfferID, tasks: Seq[TaskWithSource], resendThisOffer: Boolean = false)
+  case class MatchedTaskOps(
+      offerId: Mesos.OfferID,
+      opsWithSource: Seq[TaskOpWithSource],
+      resendThisOffer: Boolean = false) {
 
-  trait TaskLaunchSource {
-    def taskLaunchAccepted(taskInfo: TaskInfo)
-    def taskLaunchRejected(taskInfo: TaskInfo, reason: String)
+    /** all included [TaskOp] without the source information. */
+    def ops: Iterable[TaskOp] = opsWithSource.view.map(_.op)
+
+    /** All TaskInfos of launched tasks. */
+    def launchedTaskInfos: Iterable[Mesos.TaskInfo] = ops.view.collect {
+      case TaskOp.Launch(taskInfo, _, _, _) => taskInfo
+    }
+  }
+
+  object MatchedTaskOps {
+    def noMatch(offerId: Mesos.OfferID, resendThisOffer: Boolean = false): MatchedTaskOps =
+      new MatchedTaskOps(offerId, Seq.empty, resendThisOffer = resendThisOffer)
+  }
+
+  trait TaskOpSource {
+    def taskOpAccepted(taskOp: TaskOp)
+    def taskOpRejected(taskOp: TaskOp, reason: String)
   }
 }
 
@@ -44,10 +71,17 @@ object OfferMatcher {
   */
 trait OfferMatcher {
   /**
-    * Process offer and return the tasks that this matcher wants to launch.
+    * Process offer and return the ops that this matcher wants to execute on this offer.
     *
-    * The offer matcher can expect either a taskLaunchAccepted or a taskLaunchRejected call
+    * The offer matcher can expect either a taskOpAccepted or a taskOpRejected call
     * for every returned `org.apache.mesos.Protos.TaskInfo`.
     */
-  def matchOffer(deadline: Timestamp, offer: Offer): Future[OfferMatcher.MatchedTasks]
+  def matchOffer(deadline: Timestamp, offer: Mesos.Offer): Future[OfferMatcher.MatchedTaskOps]
+
+  /**
+    * We can optimize the offer routing for different offer matcher in case there are reserved resources.
+    * A defined precedence is used to filter incoming offers with reservations that apply to this filter.
+    * If the filter matches, the offer matcher manager has higher priority than other matchers.
+    */
+  def precedenceFor: Option[PathId] = None
 }

@@ -3,13 +3,13 @@ package mesosphere.marathon.core.plugin.impl
 import java.net.{ URL, URLClassLoader }
 import java.util.ServiceLoader
 
-import mesosphere.marathon.WrongConfigurationException
 import mesosphere.marathon.core.plugin.impl.PluginManagerImpl._
-import mesosphere.marathon.core.plugin.{ PluginManagerConfiguration, PluginManager }
+import mesosphere.marathon.core.plugin.{ PluginDefinition, PluginDefinitions, PluginManager }
 import mesosphere.marathon.io.IO
 import mesosphere.marathon.plugin.plugin.PluginConfiguration
+import mesosphere.marathon.{ MarathonConf, WrongConfigurationException }
 import org.slf4j.{ Logger, LoggerFactory }
-import play.api.libs.json.{ JsObject, Json }
+import play.api.libs.json.{ JsObject, JsString, Json }
 
 import scala.collection.JavaConverters._
 import scala.reflect.ClassTag
@@ -18,8 +18,9 @@ import scala.reflect.ClassTag
   * The plugin manager can load plugins from given urls.
   * @param urls the urls pointing to plugins.
   */
-private[plugin] class PluginManagerImpl(val descriptor: PluginsDescriptor, val urls: Seq[URL]) extends PluginManager {
-
+private[plugin] class PluginManagerImpl(val config: MarathonConf,
+                                        val definitions: PluginDefinitions,
+                                        val urls: Seq[URL]) extends PluginManager {
   private[this] val log: Logger = LoggerFactory.getLogger(getClass)
 
   private[this] var pluginHolders: List[PluginHolder[_]] = List.empty[PluginHolder[_]]
@@ -34,13 +35,13 @@ private[plugin] class PluginManagerImpl(val descriptor: PluginsDescriptor, val u
     def configure(plugin: T, definition: PluginDefinition): T = plugin match {
       case cf: PluginConfiguration if definition.configuration.isDefined =>
         log.info(s"Configure the plugin with this configuration: ${definition.configuration}")
-        cf.initialize(definition.configuration.get)
+        cf.initialize(Map("frameworkName" -> config.frameworkName()), definition.configuration.get)
         plugin
       case _ => plugin
     }
     val serviceLoader = ServiceLoader.load(ct.runtimeClass.asInstanceOf[Class[T]], classLoader)
-    val providers = serviceLoader.iterator().asScala
-    val plugins = descriptor.plugins.filter(_.plugin == ct.runtimeClass.getName).map { definition =>
+    val providers = serviceLoader.iterator().asScala.toSeq
+    val plugins = definitions.plugins.filter(_.plugin == ct.runtimeClass.getName).map { definition =>
       providers
         .find(_.getClass.getName == definition.implementation)
         .map(plugin => PluginReference(configure(plugin, definition), definition))
@@ -73,22 +74,27 @@ private[plugin] class PluginManagerImpl(val descriptor: PluginsDescriptor, val u
 object PluginManagerImpl {
   case class PluginReference[T](plugin: T, definition: PluginDefinition)
   case class PluginHolder[T](classTag: ClassTag[T], plugins: Seq[PluginReference[T]])
-  case class PluginDefinition(plugin: String, implementation: String, configuration: Option[JsObject])
-  case class PluginsDescriptor(plugins: Seq[PluginDefinition])
-
   implicit val definitionFormat = Json.format[PluginDefinition]
-  implicit val configurationFormat = Json.format[PluginsDescriptor]
 
-  def apply(conf: PluginManagerConfiguration): PluginManagerImpl = {
+  def parse(fileName: String): PluginDefinitions = {
+    val plugins = Json.parse(IO.readFile(fileName)).as[JsObject]
+      .\("plugins").as[JsObject]
+      .fields.map { case (id, value) => JsObject(value.as[JsObject].fields :+ ("id" -> JsString(id))) }
+      .map(_.as[PluginDefinition])
+    PluginDefinitions(plugins)
+  }
+
+  private[plugin] def apply(conf: MarathonConf): PluginManagerImpl = {
     val configuredPluginManager = for {
       dirName <- conf.pluginDir
       confName <- conf.pluginConf
     } yield {
       val sources = IO.listFiles(dirName)
-      val descriptor = Json.parse(IO.readFile(confName)).as[PluginsDescriptor]
-      new PluginManagerImpl(descriptor, sources.map(_.toURI.toURL))
+      val descriptor = parse(confName)
+      new PluginManagerImpl(conf, descriptor, sources.map(_.toURI.toURL))
     }
-    configuredPluginManager.get.getOrElse(new PluginManagerImpl(PluginsDescriptor(Seq.empty), Seq.empty))
+
+    configuredPluginManager.get.getOrElse(new PluginManagerImpl(conf, PluginDefinitions(Seq.empty), Seq.empty))
   }
 }
 

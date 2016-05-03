@@ -16,12 +16,12 @@ trait ZookeeperConf extends ScallopConf {
   private val zkURLPattern = s"""^zk://(?:$userAndPass@)?($hostAndPort(?:,$hostAndPort)*)(/$zkNode(?:/$zkNode)*)$$""".r
 
   lazy val zooKeeperTimeout = opt[Long]("zk_timeout",
-    descr = "The timeout for ZooKeeper in milliseconds",
-    default = Some(10000L))
+    descr = "The timeout for ZooKeeper in milliseconds.",
+    default = Some(10 * 1000L)) //10 seconds
 
   lazy val zooKeeperSessionTimeout = opt[Long]("zk_session_timeout",
-    descr = "The timeout for zookeeper sessions in milliseconds",
-    default = Some(30 * 60 * 1000L) //30 minutes
+    descr = "The timeout for ZooKeeper sessions in milliseconds",
+    default = Some(10 * 1000L) //10 seconds
   )
 
   lazy val zooKeeperUrl = opt[String]("zk",
@@ -33,6 +33,29 @@ trait ZookeeperConf extends ScallopConf {
   lazy val zooKeeperMaxVersions = opt[Int]("zk_max_versions",
     descr = "Limit the number of versions, stored for one entity.",
     default = Some(25)
+  )
+
+  lazy val zooKeeperCompressionEnabled = toggle("zk_compression",
+    descrYes =
+      "(Default) Enable compression of zk nodes, if the size of the node is bigger than the configured threshold.",
+    descrNo = "Disable compression of zk nodes",
+    noshort = true,
+    prefix = "disable_",
+    default = Some(true)
+  )
+
+  lazy val zooKeeperCompressionThreshold = opt[Long]("zk_compression_threshold",
+    descr = "(Default: 64 KB) Threshold in bytes, when compression is applied to the ZooKeeper node.",
+    noshort = true,
+    validate = _ >= 0,
+    default = Some(64 * 1024)
+  )
+
+  lazy val zooKeeperMaxNodeSize = opt[Long]("zk_max_node_size",
+    descr = "(Default: 1 MiB) Maximum allowed ZooKeeper node size (in bytes).",
+    noshort = true,
+    validate = _ >= 0,
+    default = Some(1024 * 1000)
   )
 
   def zooKeeperStatePath: String = "%s/state".format(zkPath)

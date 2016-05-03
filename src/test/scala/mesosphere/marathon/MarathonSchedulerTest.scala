@@ -2,21 +2,22 @@ package mesosphere.marathon
 
 import akka.actor.ActorSystem
 import akka.event.EventStream
-import akka.testkit.{ TestKit, TestProbe }
+import akka.testkit.TestProbe
 import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.launcher.OfferProcessor
 import mesosphere.marathon.core.launchqueue.LaunchQueue
-import mesosphere.marathon.core.task.bus.TaskStatusEmitter
+import mesosphere.marathon.core.task.update.TaskStatusUpdateProcessor
 import mesosphere.marathon.event.{ SchedulerDisconnectedEvent, SchedulerRegisteredEvent, SchedulerReregisteredEvent }
-import mesosphere.marathon.health.HealthCheckManager
 import mesosphere.marathon.state.AppRepository
-import mesosphere.marathon.tasks._
-import mesosphere.util.state.{ MutableMesosLeaderInfo, MesosLeaderInfo, FrameworkIdUtil }
+import mesosphere.marathon.test.{ Mockito, MarathonActorSupport }
+import mesosphere.util.state.{ FrameworkIdUtil, MesosLeaderInfo, MutableMesosLeaderInfo }
 import org.apache.mesos.Protos._
 import org.apache.mesos.SchedulerDriver
-import org.scalatest.BeforeAndAfterAll
+import org.scalatest.{ Matchers, GivenWhenThen, BeforeAndAfterAll }
 
-class MarathonSchedulerTest extends TestKit(ActorSystem("System")) with MarathonSpec with BeforeAndAfterAll {
+import scala.concurrent.Future
+
+class MarathonSchedulerTest extends MarathonActorSupport with MarathonSpec with BeforeAndAfterAll with Mockito with Matchers with GivenWhenThen {
 
   var probe: TestProbe = _
   var repo: AppRepository = _
@@ -24,11 +25,11 @@ class MarathonSchedulerTest extends TestKit(ActorSystem("System")) with Marathon
   var scheduler: MarathonScheduler = _
   var frameworkIdUtil: FrameworkIdUtil = _
   var mesosLeaderInfo: MesosLeaderInfo = _
-  var taskIdUtil: TaskIdUtil = _
   var config: MarathonConf = _
   var eventBus: EventStream = _
   var offerProcessor: OfferProcessor = _
-  var taskStatusEmitter: TaskStatusEmitter = _
+  var taskStatusProcessor: TaskStatusUpdateProcessor = _
+  var suicideFn: (Boolean) => Unit = { _ => () }
 
   before {
     repo = mock[AppRepository]
@@ -36,29 +37,27 @@ class MarathonSchedulerTest extends TestKit(ActorSystem("System")) with Marathon
     frameworkIdUtil = mock[FrameworkIdUtil]
     mesosLeaderInfo = new MutableMesosLeaderInfo
     mesosLeaderInfo.onNewMasterInfo(MasterInfo.getDefaultInstance)
-    config = defaultConfig(maxTasksPerOffer = 10)
-    taskIdUtil = TaskIdUtil
+    config = MarathonTestHelper.defaultConfig(maxTasksPerOffer = 10)
     probe = TestProbe()
     eventBus = system.eventStream
-    taskStatusEmitter = mock[TaskStatusEmitter]
+    taskStatusProcessor = mock[TaskStatusUpdateProcessor]
     scheduler = new MarathonScheduler(
       eventBus,
       Clock(),
       offerProcessor = offerProcessor,
-      taskStatusEmitter = taskStatusEmitter,
+      taskStatusProcessor = taskStatusProcessor,
       frameworkIdUtil,
       mesosLeaderInfo,
-      taskIdUtil,
       mock[ActorSystem],
       config,
       new SchedulerCallbacks {
         override def disconnected(): Unit = {}
       }
-    )
-  }
-
-  override def afterAll(): Unit = {
-    system.shutdown()
+    ) {
+      override protected def suicide(removeFrameworkId: Boolean): Unit = {
+        suicideFn(removeFrameworkId)
+      }
+    }
   }
 
   test("Publishes event when registered") {
@@ -132,5 +131,33 @@ class MarathonSchedulerTest extends TestKit(ActorSystem("System")) with Marathon
     finally {
       eventBus.unsubscribe(probe.ref)
     }
+  }
+
+  test("Suicide with an unknown error will not remove the framework id") {
+    Given("A suicide call trap")
+    val driver = mock[SchedulerDriver]
+    var suicideCall: Option[Boolean] = None
+    suicideFn = remove => { suicideCall = Some(remove) }
+
+    When("An error is reported")
+    scheduler.error(driver, "some weird mesos message")
+
+    Then("Suicide is called without removing the framework id")
+    suicideCall should be(defined)
+    suicideCall.get should be (false)
+  }
+
+  test("Suicide with a framework error will remove the framework id") {
+    Given("A suicide call trap")
+    val driver = mock[SchedulerDriver]
+    var suicideCall: Option[Boolean] = None
+    suicideFn = remove => { suicideCall = Some(remove) }
+
+    When("An error is reported")
+    scheduler.error(driver, "Framework has been removed")
+
+    Then("Suicide is called with removing the framework id")
+    suicideCall should be(defined)
+    suicideCall.get should be (true)
   }
 }

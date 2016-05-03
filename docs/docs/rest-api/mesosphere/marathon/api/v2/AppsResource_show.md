@@ -107,6 +107,26 @@ The objects in the list only contain the id of the deployment, e.g.:
 }
 ```
 
+##### readiness (Array of Objects)
+
+A list of readiness check results.
+Only available during a deployment in the start phase.
+ 
+The object in the list contains a readiness check in the format of:
+ 
+ ```javascript
+ {
+     "name": "myReadyCheck",
+     "taskId": "foo.c3c80be4-f780-11e5-8d32-e24449f9e499",
+     "ready": false,
+     "lastResponse": {
+       "status": 500,
+       "contentType": "application/json",
+       "body": "{}"
+     }
+   }
+ ```
+
 ##### lastTaskFailure (Object)
 
 Information about the last task failure for debugging purposes.
@@ -181,6 +201,16 @@ Transfer-Encoding: chunked
                 "portIndex": 0,
                 "protocol": "HTTP",
                 "timeoutSeconds": 10
+            },
+            {
+                "command": null,
+                "gracePeriodSeconds": 5,
+                "intervalSeconds": 10,
+                "maxConsecutiveFailures": 6,
+                "path": "/machinehealth",
+                "overridePort": 3333,
+                "protocol": "HTTP",
+                "timeoutSeconds": 10
             }
         ],
         "id": "/toggle",
@@ -211,6 +241,14 @@ Transfer-Encoding: chunked
                         "lastFailure": null,
                         "lastSuccess": "2014-09-13T00:25:07.506Z",
                         "taskId": "toggle.802df2ae-3ad4-11e4-a400-56847afe9799"
+                    },
+                    {
+                        "alive": true,
+                        "consecutiveFailures": 0,
+                        "firstSuccess": "2014-09-13T00:20:28.101Z",
+                        "lastFailure": null,
+                        "lastSuccess": "2014-09-13T00:25:07.506Z",
+                        "taskId": "toggle.802df2ae-3ad4-11e4-a400-56847afe9799"
                     }
                 ],
                 "host": "10.141.141.10",
@@ -232,6 +270,14 @@ Transfer-Encoding: chunked
                         "lastFailure": null,
                         "lastSuccess": "2014-09-13T00:25:07.508Z",
                         "taskId": "toggle.7c99814d-3ad4-11e4-a400-56847afe9799"
+                    },
+                    {
+                        "alive": true,
+                        "consecutiveFailures": 0,
+                        "firstSuccess": "2014-09-13T00:20:28.101Z",
+                        "lastFailure": null,
+                        "lastSuccess": "2014-09-13T00:25:07.506Z",
+                        "taskId": "toggle.802df2ae-3ad4-11e4-a400-56847afe9799"
                     }
                 ],
                 "host": "10.141.141.10",

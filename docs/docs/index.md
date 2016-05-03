@@ -1,28 +1,27 @@
 ---
-title: Setting Up and Running Marathon
+title: Install Marathon
 ---
 
-## Setting Up And Running Marathon
+# Install Marathon
 
 
 ### Requirements
 
-* [Apache Mesos][Mesos] 0.22.1+
+* [Apache Mesos][Mesos] 0.28.0+
 * [Apache ZooKeeper][ZooKeeper]
-* JDK 1.7+ 
+* JDK 1.8+
 
 ### Installation
 
 #### Install Mesos
 
-One easy way is via your system's package manager.
+Marathon runs atop Apache Mesos. You can install Mesos via your system's package manager.
 Current builds and instructions on how to set up repositories for major Linux distributions are available on the Mesosphere [downloads page](http://mesosphere.com/downloads/).
 
-If building from source, see the
+If you want to build Mesos from source, see the
 Mesos [Getting Started](http://mesos.apache.org/gettingstarted/) page or the
 [Mesosphere tutorial](http://mesosphere.com/2013/08/01/distributed-fault-tolerant-framework-apache-mesos/)
-for details. Running `make install` will install Mesos in `/usr/local` in
-the same way as these packages do.
+for details. Running `make install` will install Mesos in `/usr/local`.
 
 #### Install Marathon
 
@@ -32,59 +31,33 @@ Marathon packages are available from Mesosphere's [repositories](http://mesosphe
 
 #### From a Tarball
 
-1.  Download and unpack the latest Marathon release.
+Download and unpack the latest Marathon release.
 
-    **For Mesos 0.22.1+:**
+``` bash
+$ curl -O http://downloads.mesosphere.com/marathon/v1.1.1/marathon-1.1.1.tgz
+$ tar xzf marathon-1.1.1.tgz
+```
 
-    ``` bash
-    $ curl -O http://downloads.mesosphere.com/marathon/v0.10.1/marathon-0.10.1.tgz
-    $ tar xzf marathon-0.10.1.tgz
-    ```
-    
-    We do not expect problems in combination with Mesos 0.21.* or 0.23.* but these combinations
-    are not well tested.
-
-    **For Mesos 0.20.0 until 0.22.0:**
-
-    Please consider migrating to Mesos 0.22.1 and Marathon 0.8.2!
-
-    ``` bash
-    $ curl -O http://downloads.mesosphere.com/marathon/v0.8.1/marathon-0.8.1.tgz
-    $ tar xzf marathon-0.8.1.tgz
-    ```
-
-    SHA-256 checksums are available by appending `.sha256` to the URLs.
-
-### Versioning
-
-Starting with version 0.9.0 Marathon will adhere to [semantic versioning](http://semver.org).
-That means we are committed to keep our documented REST API compatible across releases unless we change the MAJOR version
-(the first number in the version tuple). If you depend on undocumented features, please tell us about them by [raising a GitHub issue](https://github.com/mesosphere/marathon/issues/new). API parts which we explicitly marked as EXPERIMENTAL are exempted from this rule. We will not introduce new features in PATCH version increments (the last number in the version tuple).
-
-We might change the command line interfaces of the Marathon server process in rare cases in a MINOR version upgrade.
-Please check the release notes for these.
-
-Furthermore, we will provide release candidates for all new MAJOR/MINOR versions and invite our users to test them and
-give us feedback (particularly on violations of the versioning policy).
+SHA-256 checksums are available by appending `.sha256` to the URLs.
 
 ### Upgrading to a Newer Version
 
-[See here]({{ site.baseurl }}/docs/upgrade/index.html) for our guide on upgrading to a new version.
+See [the Marathon upgrade guide](https://mesosphere.github.io/marathon/docs/upgrade/index.html) to learn how to upgrade to a new version.
 
-### Running in Production Mode
+### Running in High Availability Mode
 
-To launch Marathon in *production mode*, you need to have both
-ZooKeeper and Mesos running. The following command launches
-Marathon in *production mode*. Point your web browser to
-`localhost:8080` and you should see the Marathon UI.
+Both ZooKeeper and Mesos need to be running in order to launch Marathon in *high availability mode*.
+
+Point your web browser to
+`localhost:8080` and you should see the [Marathon UI]({{ site.baseurl }}/docs/marathon-ui.html).
 
 ``` console
 $ ./bin/start --master zk://zk1.foo.bar:2181,zk2.foo.bar:2181/mesos --zk zk://zk1.foo.bar:2181,zk2.foo.bar:2181/marathon
 ```
 
 Marathon uses `--master` to find the Mesos masters, and `--zk` to find ZooKeepers
-for storing state. They are separate options because Mesos masters can be
-discovered in other ways as well.
+for storing state. They are separate options because Mesos masters can also be
+discovered in other ways.
 
 For all configuration options, see the [command line flags](command-line-flags.html) doc. For more information on the high-availability feature of Marathon, see the [high availability](high-availability.html) doc.
 

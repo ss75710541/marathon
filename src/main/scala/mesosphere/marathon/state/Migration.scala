@@ -3,29 +3,25 @@ package mesosphere.marathon.state
 import java.io.{ ByteArrayInputStream, ObjectInputStream }
 import javax.inject.Inject
 
-import mesosphere.marathon.Protos.StorageVersion
+import mesosphere.marathon.Protos.{ MarathonTask, StorageVersion }
 import mesosphere.marathon.metrics.Metrics
-import mesosphere.marathon.state.PathId._
 import mesosphere.marathon.state.StorageVersions._
-import mesosphere.marathon.tasks.TaskTracker
-import mesosphere.marathon.tasks.TaskTracker.InternalApp
-import mesosphere.marathon.{ BuildInfo, MarathonConf }
+import mesosphere.marathon.{ BuildInfo, MarathonConf, MigrationFailedException }
 import mesosphere.util.Logging
-import mesosphere.util.ThreadPoolContext.context
-import mesosphere.util.state.{ PersistentStoreManagement, PersistentEntity, PersistentStore }
+import scala.concurrent.ExecutionContext.Implicits.global
+import mesosphere.util.state.{ PersistentStore, PersistentStoreManagement }
 import org.slf4j.LoggerFactory
 
-import scala.collection.JavaConverters._
 import scala.collection.SortedSet
 import scala.concurrent.duration._
 import scala.concurrent.{ Await, Future }
 import scala.util.control.NonFatal
-import scala.util.{ Failure, Success }
 
 class Migration @Inject() (
     store: PersistentStore,
     appRepo: AppRepository,
     groupRepo: GroupRepository,
+    taskRepo: TaskRepository,
     config: MarathonConf,
     metrics: Metrics) extends Logging {
 
@@ -33,40 +29,47 @@ class Migration @Inject() (
 
   type MigrationAction = (StorageVersion, () => Future[Any])
 
+  private[state] val minSupportedStorageVersion = StorageVersions(0, 3, 0)
+
   /**
     * All the migrations, that have to be applied.
     * They get applied after the master has been elected.
     */
   def migrations: List[MigrationAction] = List(
-    StorageVersions(0, 5, 0) -> { () =>
-      changeApps(app => app.copy(id = app.id.toString.toLowerCase.replaceAll("_", "-").toRootPath))
-    },
     StorageVersions(0, 7, 0) -> { () =>
-      for {
-        _ <- changeTasks(app => new InternalApp(app.appName.canonicalPath(), app.tasks, app.shutdown))
-        _ <- changeApps(app => app.copy(id = app.id.canonicalPath()))
-        _ <- putAppsIntoGroup()
-      } yield ()
+      Future.failed(new IllegalStateException("migration from 0.7.x not supported anymore"))
     },
     StorageVersions(0, 11, 0) -> { () =>
-      for {
-        _ <- new MigrationTo0_11(groupRepo, appRepo).migrateApps().recover {
-          case NonFatal(e) => throw new RuntimeException("while migrating storage to 0.11", e)
-        }
-      } yield ()
+      new MigrationTo0_11(groupRepo, appRepo).migrateApps().recover {
+        case NonFatal(e) => throw new MigrationFailedException("while migrating storage to 0.11", e)
+      }
+    },
+    StorageVersions(0, 13, 0) -> { () =>
+      new MigrationTo0_13(taskRepo, store).migrate().recover {
+        case NonFatal(e) => throw new MigrationFailedException("while migrating storage to 0.13", e)
+      }
+    },
+    StorageVersions(0, 16, 0) -> { () =>
+      new MigrationTo0_16(groupRepo, appRepo).migrate().recover {
+        case NonFatal(e) => throw new MigrationFailedException("while migrating storage to 0.16", e)
+      }
     }
   )
 
   def applyMigrationSteps(from: StorageVersion): Future[List[StorageVersion]] = {
-    val result = migrations.filter(_._1 > from).sortBy(_._1).map {
-      case (migrateVersion, change) =>
+    if (from < minSupportedStorageVersion && from.nonEmpty) {
+      val msg = s"Migration from versions < $minSupportedStorageVersion is not supported. Your version: $from"
+      throw new MigrationFailedException(msg)
+    }
+    migrations.filter(_._1 > from).sortBy(_._1).foldLeft(Future.successful(List.empty[StorageVersion])) {
+      case (resultsFuture, (migrateVersion, change)) => resultsFuture.flatMap { res =>
         log.info(
           s"Migration for storage: ${from.str} to current: ${current.str}: " +
             s"apply change for version: ${migrateVersion.str} "
         )
-        change.apply().map(_ => migrateVersion)
+        change.apply().map(_ => res :+ migrateVersion)
+      }
     }
-    Future.sequence(result)
   }
 
   def initializeStore(): Future[Unit] = store match {
@@ -75,15 +78,18 @@ class Migration @Inject() (
   }
 
   def migrate(): StorageVersion = {
-    val result = for {
+    val versionFuture = for {
       _ <- initializeStore()
       changes <- currentStorageVersion.flatMap(applyMigrationSteps)
       storedVersion <- storeCurrentVersion
     } yield storedVersion
 
-    result.onComplete {
-      case Success(version) => log.info(s"Migration successfully applied for version ${version.str}")
-      case Failure(ex)      => log.error("Migration failed!", ex)
+    val result = versionFuture.map { version =>
+      log.info(s"Migration successfully applied for version ${version.str}")
+      version
+    }.recover {
+      case ex: MigrationFailedException => throw ex
+      case NonFatal(ex)                 => throw new MigrationFailedException("MigrationFailed", ex)
     }
 
     Await.result(result, Duration.Inf)
@@ -94,7 +100,7 @@ class Migration @Inject() (
   def currentStorageVersion: Future[StorageVersion] = {
     store.load(storageVersionName).map {
       case Some(variable) => StorageVersion.parseFrom(variable.bytes.toArray)
-      case None           => StorageVersions.empty
+      case None           => StorageVersions.current
     }
   }
 
@@ -104,50 +110,6 @@ class Migration @Inject() (
       case Some(entity) => store.update(entity.withNewContent(bytes))
       case None         => store.create(storageVersionName, bytes)
     }.map{ _ => StorageVersions.current }
-  }
-
-  // specific migration helper methods
-
-  private def changeApps(fn: AppDefinition => AppDefinition): Future[Any] = {
-    appRepo.apps().flatMap { apps =>
-      val mappedApps = apps.map { app => appRepo.store(fn(app)) }
-      Future.sequence(mappedApps)
-    }
-  }
-
-  private def changeTasks(fn: InternalApp => InternalApp): Future[Any] = {
-    val taskTracker = new TaskTracker(store, config, metrics)
-    def fetchApp(appId: PathId): Option[InternalApp] = {
-      Await.result(store.load("tasks:" + appId.safePath), config.zkTimeoutDuration).map { entity =>
-        val source = new ObjectInputStream(new ByteArrayInputStream(entity.bytes.toArray))
-        val fetchedTasks = taskTracker.legacyDeserialize(appId, source).map {
-          case (key, task) =>
-            val builder = task.toBuilder.clearOBSOLETEStatuses()
-            task.getOBSOLETEStatusesList.asScala.lastOption.foreach(builder.setStatus)
-            key -> builder.build()
-        }
-        new InternalApp(appId, fetchedTasks, false)
-      }
-    }
-    def storeApp(app: InternalApp): Future[Seq[PersistentEntity]] = {
-      Future.sequence(app.tasks.values.toSeq.map(taskTracker.store(app.appName, _)))
-    }
-    appRepo.allPathIds().flatMap { apps =>
-      val res = apps.flatMap(fetchApp).map{ app => storeApp(fn(app)) }
-      Future.sequence(res)
-    }
-  }
-
-  private def putAppsIntoGroup(): Future[Any] = {
-    groupRepo.group("root").map(_.getOrElse(Group.empty)).map { group =>
-      appRepo.apps().flatMap { apps =>
-        val updatedGroup = apps.foldLeft(group) { (group, app) =>
-          val updatedApp = app.copy(id = app.id.canonicalPath())
-          group.updateApp(updatedApp.id, _ => updatedApp, Timestamp.now())
-        }
-        groupRepo.store("root", updatedGroup)
-      }
-    }
   }
 }
 
@@ -244,6 +206,167 @@ class MigrationTo0_11(groupRepository: GroupRepository, appRepository: AppReposi
   }
 }
 
+class MigrationTo0_13(taskRepository: TaskRepository, store: PersistentStore) {
+  private[this] val log = LoggerFactory.getLogger(getClass)
+
+  val entityStore = taskRepository.store
+
+  // the bytes stored via TaskTracker are incompatible to EntityRepo, so we have to parse them 'manually'
+  def fetchLegacyTask(taskKey: String): Future[Option[MarathonTask]] = {
+    def deserialize(taskKey: String, source: ObjectInputStream): Option[MarathonTask] = {
+      if (source.available > 0) {
+        try {
+          val size = source.readInt
+          val bytes = new Array[Byte](size)
+          source.readFully(bytes)
+          Some(MarathonTask.parseFrom(bytes))
+        }
+        catch {
+          case e: com.google.protobuf.InvalidProtocolBufferException =>
+            None
+        }
+      }
+      else {
+        None
+      }
+    }
+
+    store.load("task:" + taskKey).map(_.flatMap { entity =>
+      val source = new ObjectInputStream(new ByteArrayInputStream(entity.bytes.toArray))
+      deserialize(taskKey, source)
+    })
+  }
+
+  def migrateTasks(): Future[Unit] = {
+    log.info("Start 0.13 migration")
+
+    entityStore.names().flatMap { keys =>
+      log.info("Found {} tasks in store", keys.size)
+      // old format is appId:appId.taskId
+      val oldFormatRegex = """^.*:.*\..*$""".r
+      val namesInOldFormat = keys.filter(key => oldFormatRegex.pattern.matcher(key).matches)
+      log.info("{} tasks in old format need to be migrated.", namesInOldFormat.size)
+
+      namesInOldFormat.foldLeft(Future.successful(())) { (f, nextKey) =>
+        f.flatMap(_ => migrateKey(nextKey))
+      }
+    }.map { _ =>
+      log.info("Completed 0.13 migration")
+    }
+  }
+
+  // including 0.12, task keys are in format task:appId:taskId – the appId is
+  // already contained the task, for example as in
+  // task:my-app:my-app.13cb0cbe-b959-11e5-bb6d-5e099c92de61
+  // where my-app.13cb0cbe-b959-11e5-bb6d-5e099c92de61 is the taskId containing
+  // the appId as prefix. When using the generic EntityRepo, a colon
+  // in the key after the prefix implicitly denotes a versioned entry, so this
+  // had to be changed, even though tasks are not stored with versions. The new
+  // format looks like this:
+  // task:my-app.13cb0cbe-b959-11e5-bb6d-5e099c92de61
+  private[state] def migrateKey(legacyKey: String): Future[Unit] = {
+    fetchLegacyTask(legacyKey).flatMap {
+      case Some(task) => taskRepository.store(task).flatMap { _ =>
+        entityStore.expunge(legacyKey).map(_ => ())
+      }
+      case _ => Future.failed[Unit](new RuntimeException(s"Unable to load entity with key = $legacyKey"))
+    }
+  }
+
+  def renameFrameworkId(): Future[Unit] = {
+    val oldName = "frameworkId"
+    val newName = "framework:id"
+    def moveKey(bytes: IndexedSeq[Byte]): Future[Unit] = {
+      for {
+        _ <- store.create(newName, bytes)
+        _ <- store.delete(oldName)
+      } yield ()
+    }
+
+    store.load(newName).flatMap {
+      case Some(_) =>
+        log.info("framework:id already exists, no need to migrate")
+        Future.successful(())
+      case None =>
+        store.load(oldName).flatMap {
+          case None =>
+            log.info("no frameworkId stored, no need to migrate")
+            Future.successful(())
+          case Some(entity) =>
+            log.info("migrating frameworkId -> framework:id")
+            moveKey(entity.bytes)
+        }
+    }
+  }
+
+  def migrate(): Future[Unit] = for {
+    _ <- migrateTasks()
+    _ <- renameFrameworkId()
+  } yield ()
+}
+
+/**
+  * Implements the following migration logic:
+  * * Load all apps, the logic in AppDefinition.mergeFromProto will create portDefinitions from the deprecated ports
+  * * Save all apps, the logic in [[AppDefinition.toProto]] will save the new portDefinitions and skip the deprecated
+  *   ports
+  */
+class MigrationTo0_16(groupRepository: GroupRepository, appRepository: AppRepository) {
+  private[this] val log = LoggerFactory.getLogger(getClass)
+
+  def migrate(): Future[Unit] = {
+    log.info("Start 0.16 migration")
+    val rootGroupFuture = groupRepository.rootGroup().map(_.getOrElse(Group.empty))
+
+    for {
+      rootGroup <- rootGroupFuture
+      apps = rootGroup.transitiveApps
+      _ = log.info(s"Discovered ${apps.size} apps")
+      _ <- migrateRootGroup(rootGroup)
+      _ <- migrateApps(rootGroup)
+    } yield log.info("Finished 0.16 migration")
+  }
+
+  private[this] def migrateRootGroup(rootGroup: Group): Future[Unit] = {
+    updateAllGroupVersions()
+  }
+
+  private[this] def migrateApps(rootGroup: Group): Future[Unit] = {
+    val apps = rootGroup.transitiveApps
+
+    apps.foldLeft(Future.successful(())) { (future, app) =>
+      future.flatMap { _ => updateAllAppVersions(app.id) }
+    }
+  }
+
+  private[this] def updateAllGroupVersions(): Future[Unit] = {
+    val id = groupRepository.zkRootName
+    groupRepository.listVersions(id).map(d => d.toSeq.sorted).flatMap { sortedVersions =>
+      sortedVersions.foldLeft(Future.successful(())) { (future, version) =>
+        future.flatMap { _ =>
+          groupRepository.group(id, version).flatMap {
+            case Some(group) => groupRepository.store(id, group).map(_ => ())
+            case None        => Future.failed(new MigrationFailedException(s"Group $id:$version not found"))
+          }
+        }
+      }
+    }
+  }
+
+  private[this] def updateAllAppVersions(appId: PathId): Future[Unit] = {
+    appRepository.listVersions(appId).map(d => d.toSeq.sorted).flatMap { sortedVersions =>
+      sortedVersions.foldLeft(Future.successful(())) { (future, version) =>
+        future.flatMap { _ =>
+          appRepository.app(appId, version).flatMap {
+            case Some(app) => appRepository.store(app).map(_ => ())
+            case None      => Future.failed(new MigrationFailedException(s"App $appId:$version not found"))
+          }
+        }
+      }
+    }
+  }
+}
+
 object StorageVersions {
   val VersionRegex = """^(\d+)\.(\d+)\.(\d+).*""".r
 
@@ -274,6 +397,8 @@ object StorageVersions {
     }
 
     def str: String = s"Version(${version.getMajor}, ${version.getMinor}, ${version.getPatch})"
+
+    def nonEmpty: Boolean = !version.equals(empty)
   }
 
   def empty: StorageVersion = StorageVersions(0, 0, 0)

@@ -1,18 +1,16 @@
 package mesosphere.marathon.upgrade
 
-import mesosphere.marathon.Protos.MarathonTask
-import mesosphere.marathon.state.Timestamp
-import mesosphere.marathon.tasks.MarathonTasks
-import mesosphere.mesos.protos.Implicits.slaveIDToProto
-import mesosphere.mesos.protos.SlaveID
+import mesosphere.marathon.MarathonTestHelper
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.state.{ PathId, Timestamp }
 import org.scalatest.{ FunSuite, Matchers }
 
 class ScalingPropositionTest extends FunSuite with Matchers {
 
   test("propose - empty tasksToKill should lead to ScalingProposition(None, _)") {
     val proposition = ScalingProposition.propose(
-      runningTasks = emptyTaskSet,
-      toKill = Some(emptyTaskSet),
+      runningTasks = noTasks,
+      toKill = Some(noTasks),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 0
     )
@@ -21,10 +19,10 @@ class ScalingPropositionTest extends FunSuite with Matchers {
   }
 
   test("propose - nonEmpty tasksToKill should be ScalingProposition(Some(_), _)") {
-    val task = MarathonTask.getDefaultInstance
+    val task = MarathonTestHelper.stagedTaskForApp()
     val proposition = ScalingProposition.propose(
-      runningTasks = Set(task),
-      toKill = Some(Set(task)),
+      runningTasks = Iterable(task),
+      toKill = Some(Iterable(task)),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 0
     )
@@ -34,8 +32,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
 
   test("propose - scaleTo = 0 should be ScalingProposition(_, None)") {
     val proposition = ScalingProposition.propose(
-      runningTasks = emptyTaskSet,
-      toKill = Some(emptyTaskSet),
+      runningTasks = noTasks,
+      toKill = Some(noTasks),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 0
     )
@@ -45,8 +43,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
 
   test("propose - negative scaleTo should be ScalingProposition(_, None)") {
     val proposition = ScalingProposition.propose(
-      runningTasks = emptyTaskSet,
-      toKill = Some(emptyTaskSet),
+      runningTasks = noTasks,
+      toKill = Some(noTasks),
       meetConstraints = noConstraintsToMeet,
       scaleTo = -42
     )
@@ -56,8 +54,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
 
   test("propose - positive scaleTo should be ScalingProposition(_, Some(_))") {
     val proposition = ScalingProposition.propose(
-      runningTasks = emptyTaskSet,
-      toKill = Some(emptyTaskSet),
+      runningTasks = noTasks,
+      toKill = Some(noTasks),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 42
     )
@@ -67,8 +65,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
 
   test("Determine tasks to kill and start when none are sentenced and need to scale") {
     val proposition = ScalingProposition.propose(
-      runningTasks = Set(createTask(1), createTask(2), createTask(3)),
-      toKill = Some(emptyTaskSet),
+      runningTasks = Iterable(createTask(1), createTask(2), createTask(3)),
+      toKill = Some(noTasks),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 5
     )
@@ -78,10 +76,10 @@ class ScalingPropositionTest extends FunSuite with Matchers {
   }
 
   test("Determine tasks to kill when scaling to 0") {
-    val runningTasks = Set(createTask(1), createTask(2), createTask(3))
+    val runningTasks = Iterable(createTask(1), createTask(2), createTask(3))
     val proposition = ScalingProposition.propose(
       runningTasks = runningTasks,
-      toKill = Some(emptyTaskSet),
+      toKill = Some(noTasks),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 0
     )
@@ -98,8 +96,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
     val alreadyKilled = createTask(42)
 
     val proposition = ScalingProposition.propose(
-      runningTasks = Set(task_1, task_2, task_3),
-      toKill = Some(Set(task_2, task_3, alreadyKilled)),
+      runningTasks = Iterable(task_1, task_2, task_3),
+      toKill = Some(Iterable(task_2, task_3, alreadyKilled)),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 3
     )
@@ -117,8 +115,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
     val alreadyKilled = createTask(42)
 
     val proposition = ScalingProposition.propose(
-      runningTasks = Set(task_1, task_2, task_3, task_4),
-      toKill = Some(Set(alreadyKilled)),
+      runningTasks = Iterable(task_1, task_2, task_3, task_4),
+      toKill = Some(Iterable(alreadyKilled)),
       meetConstraints = noConstraintsToMeet,
       scaleTo = 3
     )
@@ -135,8 +133,8 @@ class ScalingPropositionTest extends FunSuite with Matchers {
     val task_4 = createTask(4)
 
     val proposition = ScalingProposition.propose(
-      runningTasks = Set(task_1, task_2, task_3, task_4),
-      toKill = Some(Set(task_2)),
+      runningTasks = Iterable(task_1, task_2, task_3, task_4),
+      toKill = Some(Iterable(task_2)),
       meetConstraints = killToMeetConstraints(task_3),
       scaleTo = 1
     )
@@ -148,15 +146,13 @@ class ScalingPropositionTest extends FunSuite with Matchers {
 
   // Helper functions
 
-  private def createTask(index: Long) = MarathonTasks.makeTask(
-    s"task-$index", "", Nil, Nil, version = Timestamp(index), now = Timestamp.now(), slaveId = SlaveID("1")
-  )
+  private def createTask(index: Long) = MarathonTestHelper.runningTask(s"task-$index", appVersion = Timestamp(index), startedAt = Timestamp.now().toDateTime.getMillis)
 
-  private def noConstraintsToMeet(running: Set[MarathonTask], killCount: Int) = Set.empty[MarathonTask]
+  private def noConstraintsToMeet(running: Iterable[Task], killCount: Int) = Iterable.empty[Task]
 
-  private def killToMeetConstraints(tasks: MarathonTask*): (Set[MarathonTask], Int) => Set[MarathonTask] =
-    (running: Set[MarathonTask], killCount: Int) => tasks.toSet
+  private def killToMeetConstraints(tasks: Task*): (Iterable[Task], Int) => Iterable[Task] =
+    (running: Iterable[Task], killCount: Int) => tasks
 
-  private def emptyTaskSet = Set.empty[MarathonTask]
+  private def noTasks = Iterable.empty[Task]
 
 }

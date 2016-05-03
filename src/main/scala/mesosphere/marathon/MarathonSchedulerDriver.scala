@@ -1,12 +1,13 @@
 package mesosphere.marathon
 
-import java.io.{ IOException, FileInputStream }
+import java.io.FileInputStream
 
 import com.google.protobuf.ByteString
 import mesosphere.chaos.http.HttpConf
 import org.apache.mesos.Protos.{ Credential, FrameworkInfo, FrameworkID }
 import org.apache.mesos.{ MesosSchedulerDriver, SchedulerDriver }
 import org.slf4j.LoggerFactory
+import FrameworkInfo.Capability
 
 object MarathonSchedulerDriver {
   private[this] val log = LoggerFactory.getLogger(getClass)
@@ -17,6 +18,9 @@ object MarathonSchedulerDriver {
                 httpConfig: HttpConf,
                 newScheduler: MarathonScheduler,
                 frameworkId: Option[FrameworkID]): SchedulerDriver = {
+
+    log.info(s"Create new Scheduler Driver with frameworkId: $frameworkId")
+
     val frameworkInfoBuilder = FrameworkInfo.newBuilder()
       .setName(config.frameworkName())
       .setFailoverTimeout(config.mesosFailoverTimeout().toDouble)
@@ -45,24 +49,24 @@ object MarathonSchedulerDriver {
     // set the authentication principal, if provided
     config.mesosAuthenticationPrincipal.get.foreach(frameworkInfoBuilder.setPrincipal)
 
-    val credential: Option[Credential] =
-      config.mesosAuthenticationPrincipal.get.map { principal =>
-        val credentialBuilder = Credential.newBuilder()
-          .setPrincipal(principal)
-
-        config.mesosAuthenticationSecretFile.get.foreach { secretFile =>
-          try {
-            val secretBytes = ByteString.readFrom(new FileInputStream(secretFile))
-            credentialBuilder.setSecret(secretBytes)
-          }
-          catch {
-            case cause: Throwable =>
-              throw new IOException(s"Error reading authentication secret from file [$secretFile]", cause)
-          }
-        }
-
-        credentialBuilder.build()
+    //set credentials only if principal and secret is set
+    val credential: Option[Credential] = {
+      for {
+        principal <- config.mesosAuthenticationPrincipal.get
+        secretFile <- config.mesosAuthenticationSecretFile.get
+      } yield {
+        val secretBytes = ByteString.readFrom(new FileInputStream(secretFile))
+        Credential.newBuilder().setPrincipal(principal).setSecret(secretBytes.toStringUtf8).build()
       }
+    }
+
+    // Task Killing Behavior enables a dedicated task update (TASK_KILLING) from mesos before a task is killed.
+    // In Marathon this task update is currently ignored.
+    // It makes sense to enable this feature, to support other tools that parse the mesos state, even if
+    // Marathon does not use it in the moment.
+    // Mesos will implement a custom kill behavior, so this state can be used by Marathon as well.
+    if (config.isFeatureSet(Features.TASK_KILLING))
+      frameworkInfoBuilder.addCapabilities(Capability.newBuilder().setType(Capability.Type.TASK_KILLING_STATE))
 
     val frameworkInfo = frameworkInfoBuilder.build()
 

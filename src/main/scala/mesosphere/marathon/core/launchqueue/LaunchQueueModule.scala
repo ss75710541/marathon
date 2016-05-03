@@ -3,18 +3,18 @@ package mesosphere.marathon.core.launchqueue
 import akka.actor.{ ActorRef, Props }
 import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.flow.OfferReviver
+import mesosphere.marathon.core.launcher.TaskOpFactory
 import mesosphere.marathon.core.launchqueue.impl.{
-  LaunchQueueDelegate,
   AppTaskLauncherActor,
   LaunchQueueActor,
+  LaunchQueueDelegate,
   RateLimiter,
   RateLimiterActor
 }
 import mesosphere.marathon.core.leadership.LeadershipModule
 import mesosphere.marathon.core.matcher.manager.OfferMatcherManager
-import mesosphere.marathon.core.task.bus.TaskStatusObservables
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.state.{ AppDefinition, AppRepository }
-import mesosphere.marathon.tasks.{ TaskFactory, TaskTracker }
 
 /**
   * Provides a [[LaunchQueue]] implementation which can be used to launch tasks for a given AppDefinition.
@@ -24,11 +24,10 @@ class LaunchQueueModule(
     leadershipModule: LeadershipModule,
     clock: Clock,
     subOfferMatcherManager: OfferMatcherManager,
-    taskStatusObservables: TaskStatusObservables,
     maybeOfferReviver: Option[OfferReviver],
     appRepository: AppRepository,
     taskTracker: TaskTracker,
-    taskFactory: TaskFactory) {
+    taskOpFactory: TaskOpFactory) {
 
   private[this] val launchQueueActorRef: ActorRef = {
     val props = LaunchQueueActor.props(config, appActorProps)
@@ -38,19 +37,18 @@ class LaunchQueueModule(
 
   private[this] val rateLimiterActor: ActorRef = {
     val props = RateLimiterActor.props(
-      rateLimiter, taskTracker, appRepository, launchQueueActorRef, taskStatusObservables)
+      rateLimiter, appRepository, launchQueueActorRef)
     leadershipModule.startWhenLeader(props, "rateLimiter")
   }
 
-  val taskQueue: LaunchQueue = new LaunchQueueDelegate(config, launchQueueActorRef, rateLimiterActor)
+  val launchQueue: LaunchQueue = new LaunchQueueDelegate(config, launchQueueActorRef, rateLimiterActor)
 
   private[this] def appActorProps(app: AppDefinition, count: Int): Props =
     AppTaskLauncherActor.props(
       config,
       subOfferMatcherManager,
       clock,
-      taskFactory,
-      taskStatusObservables,
+      taskOpFactory,
       maybeOfferReviver,
       taskTracker,
       rateLimiterActor)(app, count)

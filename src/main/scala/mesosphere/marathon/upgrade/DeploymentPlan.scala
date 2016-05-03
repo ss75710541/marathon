@@ -3,9 +3,14 @@ package mesosphere.marathon.upgrade
 import java.net.URL
 import java.util.UUID
 
-import mesosphere.marathon.Protos
-import mesosphere.marathon.Protos.MarathonTask
+import com.wix.accord.dsl._
+import com.wix.accord._
+import mesosphere.marathon.Protos.ZKStoreEntry
+import mesosphere.marathon.{ MarathonConf, Protos }
+import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.state._
+import mesosphere.marathon.api.v2.Validation._
+import mesosphere.util.state.zk.{ CompressionConf, ZKData }
 import org.slf4j.LoggerFactory
 
 import scala.collection.JavaConverters._
@@ -22,7 +27,7 @@ final case class StartApplication(app: AppDefinition, scaleTo: Int) extends Depl
 // application is started, but the instance count should be changed
 final case class ScaleApplication(app: AppDefinition,
                                   scaleTo: Int,
-                                  sentencedToDeath: Option[Set[MarathonTask]] = None) extends DeploymentAction
+                                  sentencedToDeath: Option[Iterable[Task]] = None) extends DeploymentAction
 
 // application is started, but shall be completely stopped
 final case class StopApplication(app: AppDefinition) extends DeploymentAction
@@ -71,12 +76,18 @@ final case class DeploymentPlan(
 
   def nonEmpty: Boolean = !isEmpty
 
+  def affectedApplications: Set[AppDefinition] = steps.flatMap(_.actions.map(_.app)).toSet
+
   /** @return all ids of apps which are referenced in any deployment actions */
-  def affectedApplicationIds: Set[PathId] = steps.flatMap(_.actions.map(_.app.id)).toSet
+  lazy val affectedApplicationIds: Set[PathId] = steps.flatMap(_.actions.map(_.app.id)).toSet
 
   def isAffectedBy(other: DeploymentPlan): Boolean =
     // FIXME: check for group change conflicts?
     affectedApplicationIds.intersect(other.affectedApplicationIds).nonEmpty
+
+  def createdOrUpdatedApps: Seq[AppDefinition] = {
+    target.transitiveApps.toIndexedSeq.filter(app => affectedApplicationIds(app.id))
+  }
 
   override def toString: String = {
     def appString(app: AppDefinition): String = {
@@ -91,7 +102,8 @@ final case class DeploymentPlan(
       case StartApplication(app, scale) => s"Start(${appString(app)}, instances=$scale)"
       case StopApplication(app)         => s"Stop(${appString(app)})"
       case ScaleApplication(app, scale, toKill) =>
-        val killTasksString = toKill.filter(_.nonEmpty).map(", killTasks=" + _.map(_.getId).mkString(",")).getOrElse("")
+        val killTasksString =
+          toKill.filter(_.nonEmpty).map(", killTasks=" + _.map(_.taskId.idString).mkString(",")).getOrElse("")
         s"Scale(${appString(app)}, instances=$scale$killTasksString)"
       case RestartApplication(app)     => s"Restart(${appString(app)})"
       case ResolveArtifacts(app, urls) => s"Resolve(${appString(app)}, $urls})"
@@ -193,7 +205,7 @@ object DeploymentPlan {
     * from the topology of the target group's dependency graph.
     */
   def dependencyOrderedSteps(original: Group, target: Group,
-                             toKill: Map[PathId, Set[MarathonTask]]): Seq[DeploymentStep] = {
+                             toKill: Map[PathId, Iterable[Task]]): Seq[DeploymentStep] = {
     val originalApps: Map[PathId, AppDefinition] =
       original.transitiveApps.map(app => app.id -> app).toMap
 
@@ -238,7 +250,7 @@ object DeploymentPlan {
     target: Group,
     resolveArtifacts: Seq[ResolveArtifacts] = Seq.empty,
     version: Timestamp = Timestamp.now(),
-    toKill: Map[PathId, Set[MarathonTask]] = Map.empty): DeploymentPlan = {
+    toKill: Map[PathId, Iterable[Task]] = Map.empty): DeploymentPlan = {
 
     // Lookup maps for original and target apps.
     val originalApps: Map[PathId, AppDefinition] =
@@ -261,7 +273,7 @@ object DeploymentPlan {
     )
 
     // 2. Start apps that do not exist in the original, requiring only 0
-    //    instances.  These are scaled as needed in the depency-ordered
+    //    instances.  These are scaled as needed in the dependency-ordered
     //    steps that follow.
     steps += DeploymentStep(
       (targetApps -- originalApps.keys).valuesIterator.map { newApp =>
@@ -295,4 +307,22 @@ object DeploymentPlan {
     result
   }
 
+  def deploymentPlanValidator(conf: MarathonConf): Validator[DeploymentPlan] = {
+    val maxSize = conf.zooKeeperMaxNodeSize()
+    val maxSizeError = s"""The way we persist data in ZooKeeper would exceed the maximum ZK node size ($maxSize bytes).
+                         |You can adjust this value via --zk_max_node_size, but make sure this value is compatible with
+                         |your ZooKeeper ensemble!
+                         |See: http://zookeeper.apache.org/doc/r3.3.1/zookeeperAdmin.html#Unsafe+Options""".stripMargin
+    val notBeTooBig = isTrue[DeploymentPlan](maxSizeError) { plan =>
+      val compressionConf = CompressionConf(conf.zooKeeperCompressionEnabled(), conf.zooKeeperCompressionThreshold())
+      val zkDataProto = ZKData(s"deployment-${plan.id}", UUID.fromString(plan.id), plan.toProto.toByteArray)
+        .toProto(compressionConf)
+      zkDataProto.toByteArray.length < maxSize
+    }
+
+    validator[DeploymentPlan] { plan =>
+      plan.createdOrUpdatedApps as "app" is every(valid(AppDefinition.updateIsValid(plan.original)))
+      plan should notBeTooBig
+    }
+  }
 }

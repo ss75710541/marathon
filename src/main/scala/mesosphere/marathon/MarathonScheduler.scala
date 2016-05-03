@@ -6,10 +6,8 @@ import akka.actor.ActorSystem
 import akka.event.EventStream
 import mesosphere.marathon.core.base.Clock
 import mesosphere.marathon.core.launcher.OfferProcessor
-import mesosphere.marathon.core.task.bus.TaskStatusObservables.TaskStatusUpdate
-import mesosphere.marathon.core.task.bus.{ MarathonTaskStatus, TaskStatusEmitter }
+import mesosphere.marathon.core.task.update.TaskStatusUpdateProcessor
 import mesosphere.marathon.event._
-import mesosphere.marathon.tasks._
 import mesosphere.util.state.{ FrameworkIdUtil, MesosLeaderInfo }
 import org.apache.mesos.Protos._
 import org.apache.mesos.{ Scheduler, SchedulerDriver }
@@ -26,17 +24,16 @@ class MarathonScheduler @Inject() (
     @Named(EventModule.busName) eventBus: EventStream,
     clock: Clock,
     offerProcessor: OfferProcessor,
-    taskStatusEmitter: TaskStatusEmitter,
+    taskStatusProcessor: TaskStatusUpdateProcessor,
     frameworkIdUtil: FrameworkIdUtil,
     mesosLeaderInfo: MesosLeaderInfo,
-    taskIdUtil: TaskIdUtil,
     system: ActorSystem,
     config: MarathonConf,
     schedulerCallbacks: SchedulerCallbacks) extends Scheduler {
 
   private[this] val log = LoggerFactory.getLogger(getClass.getName)
 
-  import mesosphere.util.ThreadPoolContext.context
+  import scala.concurrent.ExecutionContext.Implicits.global
 
   implicit val zkTimeout = config.zkTimeoutDuration
 
@@ -75,7 +72,10 @@ class MarathonScheduler @Inject() (
     log.info("Received status update for task %s: %s (%s)"
       .format(status.getTaskId.getValue, status.getState, status.getMessage))
 
-    taskStatusEmitter.publish(TaskStatusUpdate(timestamp = clock.now(), status.getTaskId, MarathonTaskStatus(status)))
+    taskStatusProcessor.publish(status).onFailure {
+      case NonFatal(e) =>
+        log.error(s"while processing task status update $status", e)
+    }
   }
 
   override def frameworkMessage(
@@ -110,12 +110,18 @@ class MarathonScheduler @Inject() (
   }
 
   override def error(driver: SchedulerDriver, message: String) {
-    log.warn("Error: %s".format(message))
+    log.warn(s"Error: $message\n" +
+      s"In case Mesos does not allow registration with the current frameworkId, " +
+      s"delete the ZooKeeper Node: ${config.zkPath}/state/framework:id\n" +
+      s"CAUTION: if you remove this node, all tasks started with the current frameworkId will be orphaned!")
 
     // Currently, it's pretty hard to disambiguate this error from other causes of framework errors.
     // Watch MESOS-2522 which will add a reason field for framework errors to help with this.
-    // For now the frameworkId is removed for all messages.
-    val removeFrameworkId = true
+    // For now the frameworkId is removed based on the error message.
+    val removeFrameworkId = message match {
+      case "Framework has been removed" => true
+      case _: String                    => false
+    }
     suicide(removeFrameworkId)
   }
 
@@ -130,7 +136,7 @@ class MarathonScheduler @Inject() (
     * the scheduler may never re-register with the saved FrameworkID until
     * the leading Mesos master process is killed.
     */
-  private def suicide(removeFrameworkId: Boolean): Unit = {
+  protected def suicide(removeFrameworkId: Boolean): Unit = {
     log.error(s"Committing suicide!")
 
     if (removeFrameworkId) Await.ready(frameworkIdUtil.expunge(), config.zkTimeoutDuration)

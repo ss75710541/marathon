@@ -1,6 +1,5 @@
 package mesosphere.marathon.state
 
-import com.google.common.collect.Lists
 import mesosphere.marathon.Protos.ServiceDefinition
 import mesosphere.marathon.state.PathId._
 import mesosphere.marathon.{ MarathonSpec, Protos }
@@ -21,7 +20,7 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
       cpus = 4.0,
       mem = 256.0,
       instances = 5,
-      ports = Seq(8080, 8081),
+      portDefinitions = PortDefinitions(8080, 8081),
       executor = "//cmd",
       acceptedResourceRoles = Some(Set("a", "b"))
     )
@@ -32,7 +31,7 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
     assert(proto1.getCmd.getShell)
     assert("bash foo-*/start -Dhttp.port=$PORT" == proto1.getCmd.getValue)
     assert(5 == proto1.getInstances)
-    assert(Lists.newArrayList(8080, 8081) == proto1.getPortsList)
+    assert(Seq(8080, 8081) == proto1.getPortDefinitionsList.asScala.map(_.getNumber))
     assert("//cmd" == proto1.getExecutor)
     assert(4 == getScalarResourceValue(proto1, "cpus"), 1e-6)
     assert(256 == getScalarResourceValue(proto1, "mem"), 1e-6)
@@ -53,7 +52,7 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
       cpus = 4.0,
       mem = 256.0,
       instances = 5,
-      ports = Seq(8080, 8081),
+      portDefinitions = PortDefinitions(8080, 8081),
       executor = "//cmd",
       upgradeStrategy = UpgradeStrategy(0.7, 0.4)
     )
@@ -64,7 +63,7 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
     assert(!proto2.getCmd.getShell)
     assert(Seq("a", "b", "c") == proto2.getCmd.getArgumentsList.asScala)
     assert(5 == proto2.getInstances)
-    assert(Lists.newArrayList(8080, 8081) == proto2.getPortsList)
+    assert(Seq(8080, 8081) == proto2.getPortDefinitionsList.asScala.map(_.getNumber))
     assert("//cmd" == proto2.getExecutor)
     assert(4 == getScalarResourceValue(proto2, "cpus"), 1e-6)
     assert(256 == getScalarResourceValue(proto2, "mem"), 1e-6)
@@ -109,6 +108,57 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
     read should be(app)
   }
 
+  test("ipAddress to proto and back again") {
+    val app = AppDefinition(
+      id = "app-with-ip-address".toPath,
+      cmd = Some("sleep 30"),
+      portDefinitions = Nil,
+      ipAddress = Some(
+        IpAddress(
+          groups = Seq("a", "b", "c"),
+          labels = Map(
+            "foo" -> "bar",
+            "baz" -> "buzz"
+          )
+        )
+      )
+    )
+
+    val proto = app.toProto
+    proto.getId should be("app-with-ip-address")
+    proto.hasIpAddress should be (true)
+
+    val read = AppDefinition().mergeFromProto(proto)
+    read should be(app)
+  }
+
+  test("ipAddress discovery to proto and back again") {
+    val app = AppDefinition(
+      id = "app-with-ip-address".toPath,
+      cmd = Some("sleep 30"),
+      portDefinitions = Nil,
+      ipAddress = Some(
+        IpAddress(
+          groups = Seq("a", "b", "c"),
+          labels = Map(
+            "foo" -> "bar",
+            "baz" -> "buzz"
+          ),
+          discoveryInfo = DiscoveryInfo(
+            ports = Vector(DiscoveryInfo.Port(name = "http", number = 80, protocol = "tcp"))
+          )
+        )
+      )
+    )
+
+    val proto = app.toProto
+
+    proto.getIpAddress.hasDiscoveryInfo should be (true)
+    proto.getIpAddress.getDiscoveryInfo.getPortsList.size() should be (1)
+    val read = AppDefinition().mergeFromProto(proto)
+    read should equal(app)
+  }
+
   test("MergeFromProto") {
     val cmd = mesos.CommandInfo.newBuilder
       .setValue("bash foo-*/start -Dhttp.port=$PORT")
@@ -129,6 +179,24 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
     assert(Some("bash foo-*/start -Dhttp.port=$PORT") == app1.cmd)
   }
 
+  test("Read obsolete ports from proto") {
+    val cmd = mesos.CommandInfo.newBuilder.setValue("bash foo-*/start -Dhttp.port=$PORT")
+
+    val proto1 = ServiceDefinition.newBuilder
+      .setId("/app")
+      .setCmd(cmd)
+      .setInstances(1)
+      .setExecutor("//cmd")
+      .setVersion(Timestamp.now().toString)
+      .addPorts(1000)
+      .addPorts(1001)
+      .build
+
+    val app = AppDefinition().mergeFromProto(proto1)
+
+    assert(PortDefinitions(1000, 1001) == app.portDefinitions)
+  }
+
   test("ProtoRoundtrip") {
     val app1 = AppDefinition(
       id = "play".toPath,
@@ -136,7 +204,7 @@ class AppDefinitionTest extends MarathonSpec with Matchers {
       cpus = 4.0,
       mem = 256.0,
       instances = 5,
-      ports = Seq(8080, 8081),
+      portDefinitions = PortDefinitions(8080, 8081),
       executor = "//cmd",
       labels = Map(
         "one" -> "aaa",

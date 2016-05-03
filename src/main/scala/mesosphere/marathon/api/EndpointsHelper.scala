@@ -1,12 +1,10 @@
 package mesosphere.marathon.api
 
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.state.AppDefinition
-import mesosphere.marathon.tasks.TaskTracker
 import org.apache.mesos.Protos.TaskState
-import scala.collection.JavaConverters._
 
 object EndpointsHelper {
-
   /**
     * Produces a script-friendly string representation of the supplied
     * apps' tasks.  The data columns in the result are separated by
@@ -16,28 +14,31 @@ object EndpointsHelper {
     taskTracker: TaskTracker,
     apps: Seq[AppDefinition],
     delimiter: String): String = {
+    val tasksMap = taskTracker.tasksByAppSync
+
     val sb = new StringBuilder
-    for (app <- apps) {
-      val cleanId = app.id.safePath.replaceAll("\\s+", "_")
-      val tasks = taskTracker.get(app.id)
+    for (app <- apps if app.ipAddress.isEmpty) {
+      val tasks = tasksMap.appTasks(app.id)
+      val cleanId = app.id.safePath
 
       val servicePorts = app.servicePorts
 
       if (servicePorts.isEmpty) {
-        sb.append(s"${cleanId}$delimiter $delimiter")
-        for (task <- tasks if task.getStatus.getState == TaskState.TASK_RUNNING) {
-          sb.append(s"${task.getHost} ")
+        sb.append(cleanId).append(delimiter).append(' ').append(delimiter)
+        for (task <- tasks if task.mesosStatus.exists(_.getState == TaskState.TASK_RUNNING)) {
+          sb.append(task.agentInfo.host).append(' ')
         }
-        sb.append(s"\n")
+        sb.append('\n')
       }
       else {
         for ((port, i) <- servicePorts.zipWithIndex) {
-          sb.append(s"$cleanId$delimiter$port$delimiter")
-          for (task <- tasks if task.getStatus.getState == TaskState.TASK_RUNNING) {
-            val ports = task.getPortsList.asScala.lift
-            sb.append(s"${task.getHost}:${ports(i).getOrElse(0)}$delimiter")
+          sb.append(cleanId).append(delimiter).append(port).append(delimiter)
+
+          for (task <- tasks if task.mesosStatus.exists(_.getState == TaskState.TASK_RUNNING)) {
+            val taskPort = task.launched.flatMap(_.hostPorts.drop(i).headOption).getOrElse(0)
+            sb.append(task.agentInfo.host).append(':').append(taskPort).append(delimiter)
           }
-          sb.append("\n")
+          sb.append('\n')
         }
       }
     }

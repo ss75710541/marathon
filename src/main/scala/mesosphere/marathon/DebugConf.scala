@@ -2,13 +2,13 @@ package mesosphere.marathon
 
 import javax.inject.Provider
 
+import ch.qos.logback.classic.Level
 import com.google.inject.AbstractModule
 import com.google.inject.matcher.{ AbstractMatcher, Matchers }
 import mesosphere.marathon.metrics.{ MetricPrefixes, Metrics }
 import org.aopalliance.intercept.{ MethodInterceptor, MethodInvocation }
-import org.apache.log4j.{ Level, Logger }
 import org.rogach.scallop.ScallopConf
-import org.slf4j.LoggerFactory
+import org.slf4j.{ Logger, LoggerFactory }
 
 /**
   * Options related to debugging marathon.
@@ -16,8 +16,8 @@ import org.slf4j.LoggerFactory
 trait DebugConf extends ScallopConf {
 
   lazy val debugTracing = toggle("tracing",
-    descrYes = "Enable trace logging of service method calls",
-    descrNo = "(Default) Disable trace logging of service method calls",
+    descrYes = "Enable trace logging of service method calls.",
+    descrNo = "(Default) Disable trace logging of service method calls.",
     default = Some(false),
     noshort = true,
     prefix = "disable_")
@@ -28,8 +28,14 @@ trait DebugConf extends ScallopConf {
   lazy val enableDebugTracing = debugTracing() || deprecatedDebugTracing()
 
   lazy val metrics = toggle("metrics",
-    descrYes = "(Default) Enable metric measurement of service method calls",
-    descrNo = "Disable metric measurement of service method calls",
+    descrYes =
+      "(Default) Expose the execution time of service method calls using code instrumentation" +
+        " via the metrics endpoint (/metrics). This might noticeably degrade performance" +
+        " but can help finding performance problems.",
+    descrNo =
+      "Disable exposing execution time of service method calls using code instrumentation" +
+        " via the metrics endpoing (/metrics). " +
+        "This does not turn off reporting of other metrics.",
     default = Some(true),
     noshort = true,
     prefix = "disable_")
@@ -39,7 +45,7 @@ trait DebugConf extends ScallopConf {
   mutuallyExclusive(metrics, deprecatedEnableMetrics)
 
   lazy val logLevel = opt[String]("logging_level",
-    descr = "Set logging level to one of: off, fatal, error, warn, info, debug, trace, all",
+    descr = "Set logging level to one of: off, error, warn, info, debug, trace, all",
     noshort = true
   )
 }
@@ -82,7 +88,11 @@ class DebugModule(conf: DebugConf) extends AbstractModule {
 
   override def configure(): Unit = {
     //set trace log level
-    conf.logLevel.get.foreach(level => Logger.getRootLogger.setLevel(Level.toLevel(level.toUpperCase)))
+    conf.logLevel.get.foreach { levelName =>
+      val level = Level.toLevel(if ("fatal".equalsIgnoreCase(levelName)) "fatal" else levelName)
+      val rootLogger = LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME).asInstanceOf[ch.qos.logback.classic.Logger]
+      rootLogger.setLevel(level)
+    }
 
     //add behaviors
     val metricsProvider = getProvider(classOf[Metrics])

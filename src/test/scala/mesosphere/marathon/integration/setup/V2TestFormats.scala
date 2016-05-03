@@ -1,9 +1,9 @@
 package mesosphere.marathon.integration.setup
 
-import mesosphere.marathon.api.v2.json.{ V2AppUpdate, V2Group }
+import mesosphere.marathon.api.v2.json.{ AppUpdate, AppUpdate$ }
 import mesosphere.marathon.event._
 import mesosphere.marathon.event.http.EventSubscribers
-import mesosphere.marathon.state.Timestamp
+import mesosphere.marathon.state.{ Group, Timestamp }
 import mesosphere.marathon.upgrade.DeploymentPlan
 import play.api.libs.json._
 
@@ -16,8 +16,8 @@ object V2TestFormats {
   implicit lazy val DeploymentPlanReads: Reads[DeploymentPlan] = Reads { js =>
     JsSuccess(
       DeploymentPlan(
-        original = (js \ "original").as[V2Group].toGroup(),
-        target = (js \ "target").as[V2Group].toGroup(),
+        original = (js \ "original").as[Group],
+        target = (js \ "target").as[Group],
         version = (js \ "version").as[Timestamp]).copy(id = (js \ "id").as[String]
         )
     )
@@ -35,9 +35,6 @@ object V2TestFormats {
   implicit lazy val GroupChangeFailedReads: Reads[GroupChangeFailed] = Json.reads[GroupChangeFailed]
   implicit lazy val DeploymentSuccessReads: Reads[DeploymentSuccess] = Json.reads[DeploymentSuccess]
   implicit lazy val DeploymentFailedReads: Reads[DeploymentFailed] = Json.reads[DeploymentFailed]
-  //  implicit lazy val DeploymentStatusReads: Reads[DeploymentStatus] = Json.reads[DeploymentStatus]
-  //  implicit lazy val DeploymentStepSuccessReads: Reads[DeploymentStepSuccess] = Json.reads[DeploymentStepSuccess]
-  //  implicit lazy val DeploymentStepFailureReads: Reads[DeploymentStepFailure] = Json.reads[DeploymentStepFailure]
   implicit lazy val MesosStatusUpdateEventReads: Reads[MesosStatusUpdateEvent] = Json.reads[MesosStatusUpdateEvent]
   implicit lazy val MesosFrameworkMessageEventReads: Reads[MesosFrameworkMessageEvent] =
     Json.reads[MesosFrameworkMessageEvent]
@@ -52,7 +49,7 @@ object V2TestFormats {
     JsSuccess(EventSubscribers(urls = (subscribersJson \ "callbackUrls").asOpt[Set[String]].getOrElse(Set.empty)))
   }
 
-  implicit lazy val v2AppUpdateWrite: Writes[V2AppUpdate] = Writes { update =>
+  implicit lazy val v2AppUpdateWrite: Writes[AppUpdate] = Writes { update =>
     Json.obj(
       "id" -> update.id.map(_.toString),
       "cmd" -> update.cmd,
@@ -65,20 +62,22 @@ object V2TestFormats {
       "disk" -> update.disk.map(_.toDouble),
       "executor" -> update.executor,
       "constraints" -> update.constraints,
-      "uris" -> update.uris,
+      "fetch" -> update.fetch,
       "storeUrls" -> update.storeUrls,
-      "ports" -> update.ports,
+      "portDefinitions" -> update.portDefinitions,
       "requirePorts" -> update.requirePorts,
       "backoffSeconds" -> update.backoff.map(_.toSeconds),
       "backoffFactor" -> update.backoffFactor,
       "maxLaunchDelaySeconds" -> update.maxLaunchDelay.map(_.toSeconds),
       "container" -> update.container,
       "healthChecks" -> update.healthChecks,
+      "readinessChecks" -> update.readinessChecks,
       "dependencies" -> update.dependencies,
       "upgradeStrategy" -> update.upgradeStrategy,
       "labels" -> update.labels,
       "version" -> update.version,
-      "acceptedResourceRoles" -> update.acceptedResourceRoles
+      "acceptedResourceRoles" -> update.acceptedResourceRoles,
+      "ipAddress" -> update.ipAddress
     )
   }
 }

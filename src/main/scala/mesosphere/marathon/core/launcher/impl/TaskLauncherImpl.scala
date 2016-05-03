@@ -4,9 +4,9 @@ import java.util.Collections
 
 import mesosphere.marathon.MarathonSchedulerDriverHolder
 import mesosphere.marathon.core.base.Clock
-import mesosphere.marathon.core.launcher.TaskLauncher
+import mesosphere.marathon.core.launcher.{ TaskOp, TaskLauncher }
 import mesosphere.marathon.metrics.{ MetricPrefixes, Metrics }
-import org.apache.mesos.Protos.{ OfferID, Status, TaskInfo }
+import org.apache.mesos.Protos.{ OfferID, Status }
 import org.apache.mesos.{ Protos, SchedulerDriver }
 import org.slf4j.LoggerFactory
 
@@ -21,16 +21,28 @@ private[launcher] class TaskLauncherImpl(
   private[this] val declinedOffersMeter =
     metrics.meter(metrics.name(MetricPrefixes.SERVICE, getClass, "declinedOffers"))
 
-  override def launchTasks(offerID: OfferID, taskInfos: Seq[TaskInfo]): Boolean = {
-    val launched = withDriver(s"launchTasks($offerID)") { driver =>
+  override def acceptOffer(offerID: OfferID, taskOps: Seq[TaskOp]): Boolean = {
+    val accepted = withDriver(s"launchTasks($offerID)") { driver =>
       import scala.collection.JavaConverters._
-      driver.launchTasks(Collections.singleton(offerID), taskInfos.asJava)
+
+      //We accept the offer, the rest of the offer is declined automatically with the given filter.
+      //The filter duration is set to 0, so we get the same offer in the next allocator cycle.
+      val noFilter = Protos.Filters.newBuilder().setRefuseSeconds(0).build()
+      val operations = taskOps.flatMap(_.offerOperations)
+      if (log.isDebugEnabled) {
+        log.debug(s"Operations on $offerID:\n${operations.mkString("\n")}")
+      }
+      driver.acceptOffers(Collections.singleton(offerID), operations.asJava, noFilter)
     }
-    if (launched) {
+    if (accepted) {
       usedOffersMeter.mark()
-      launchedTasksMeter.mark(taskInfos.size.toLong)
+      val launchCount = taskOps.count {
+        case _: TaskOp.Launch => true
+        case _                => false
+      }
+      launchedTasksMeter.mark(launchCount)
     }
-    launched
+    accepted
   }
 
   override def declineOffer(offerID: OfferID, refuseMilliseconds: Option[Long]): Unit = {

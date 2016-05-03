@@ -5,10 +5,12 @@ import akka.actor._
 import akka.event.EventStream
 import mesosphere.marathon.MarathonSchedulerActor.{ RetrieveRunningDeployments, RunningDeployments }
 import mesosphere.marathon.core.launchqueue.LaunchQueue
+import mesosphere.marathon.core.readiness.{ ReadinessCheckExecutor, ReadinessCheckResult }
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.health.HealthCheckManager
 import mesosphere.marathon.io.storage.StorageProvider
-import mesosphere.marathon.state.{ AppRepository, Group, Timestamp }
-import mesosphere.marathon.tasks.TaskTracker
+import mesosphere.marathon.state.{ PathId, AppRepository, Group, Timestamp }
 import mesosphere.marathon.upgrade.DeploymentActor.Cancel
 import mesosphere.marathon.{ ConcurrentTaskUpgradeException, DeploymentCanceledException, SchedulerActions }
 import org.apache.mesos.SchedulerDriver
@@ -21,11 +23,13 @@ import scala.util.control.NonFatal
 class DeploymentManager(
     appRepository: AppRepository,
     taskTracker: TaskTracker,
-    taskQueue: LaunchQueue,
+    launchQueue: LaunchQueue,
     scheduler: SchedulerActions,
     storage: StorageProvider,
     healthCheckManager: HealthCheckManager,
-    eventBus: EventStream) extends Actor with ActorLogging {
+    eventBus: EventStream,
+    readinessCheckExecutor: ReadinessCheckExecutor,
+    config: UpgradeConfig) extends Actor with ActorLogging {
   import context.dispatcher
   import mesosphere.marathon.upgrade.DeploymentManager._
 
@@ -92,16 +96,22 @@ class DeploymentManager(
           scheduler,
           plan,
           taskTracker,
-          taskQueue,
+          launchQueue,
           storage,
           healthCheckManager,
-          eventBus
+          eventBus,
+          readinessCheckExecutor,
+          config
         ),
         plan.id
       )
       runningDeployments += plan.id -> DeploymentInfo(ref, plan)
 
     case stepInfo: DeploymentStepInfo => deploymentStatus += stepInfo.plan.id -> stepInfo
+
+    case ReadinessCheckUpdate(id, result) => deploymentStatus.get(id).foreach { info =>
+      deploymentStatus += id -> info.copy(readinessChecks = info.readinessChecks.updated(result.taskId, result))
+    }
 
     case _: PerformDeployment =>
       sender() ! Status.Failure(new ConcurrentTaskUpgradeException("Deployment is already in progress"))
@@ -123,13 +133,38 @@ object DeploymentManager {
   case object CancelAllDeployments
   final case class CancelConflictingDeployments(plan: DeploymentPlan)
 
-  final case class DeploymentStepInfo(plan: DeploymentPlan, step: DeploymentStep, nr: Int)
+  final case class DeploymentStepInfo(plan: DeploymentPlan,
+                                      step: DeploymentStep,
+                                      nr: Int,
+                                      readinessChecks: Map[Task.Id, ReadinessCheckResult] = Map.empty) {
+    lazy val readinessChecksByApp: Map[PathId, Iterable[ReadinessCheckResult]] = {
+      readinessChecks.values.groupBy(_.taskId.appId).withDefaultValue(Iterable.empty)
+    }
+  }
+
   final case class DeploymentFinished(plan: DeploymentPlan)
   final case class DeploymentFailed(plan: DeploymentPlan, reason: Throwable)
   final case class AllDeploymentsCanceled(plans: Seq[DeploymentPlan])
   final case class ConflictingDeploymentsCanceled(id: String, deployments: Seq[DeploymentPlan])
+  final case class ReadinessCheckUpdate(deploymentId: String, result: ReadinessCheckResult)
 
   final case class DeploymentInfo(
     ref: ActorRef,
     plan: DeploymentPlan)
+
+  //scalastyle:off
+  def props(
+    appRepository: AppRepository,
+    taskTracker: TaskTracker,
+    launchQueue: LaunchQueue,
+    scheduler: SchedulerActions,
+    storage: StorageProvider,
+    healthCheckManager: HealthCheckManager,
+    eventBus: EventStream,
+    readinessCheckExecutor: ReadinessCheckExecutor,
+    config: UpgradeConfig): Props = {
+    Props(new DeploymentManager(appRepository, taskTracker, launchQueue,
+      scheduler, storage, healthCheckManager, eventBus, readinessCheckExecutor, config))
+  }
+
 }

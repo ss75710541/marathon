@@ -2,9 +2,11 @@ package mesosphere.mesos.scale
 
 import java.io.File
 
-import mesosphere.marathon.api.v2.json.{ V2AppDefinition, V2AppUpdate }
+import mesosphere.marathon.api.v2.json.{ AppUpdate }
+import mesosphere.marathon.integration.facades.{ ITDeploymentResult, MarathonFacade }
 import mesosphere.marathon.integration.setup._
-import mesosphere.marathon.state.PathId
+import MarathonFacade._
+import mesosphere.marathon.state.{ AppDefinition, PathId }
 import org.scalatest.{ BeforeAndAfter, GivenWhenThen, Matchers }
 import org.slf4j.LoggerFactory
 import play.api.libs.json._
@@ -28,11 +30,6 @@ class SingleAppScalingTest
   //clean up state before running the test case
   before(cleanUp())
 
-  def extractDeploymentIds(app: RestResult[V2AppDefinition]): Seq[String] = {
-    for (deployment <- (app.entityJson \ "deployments").as[JsArray].value)
-      yield (deployment \ "id").as[String]
-  }
-
   override def startMarathon(port: Int, args: String*): Unit = {
     val cwd = new File(".")
 
@@ -50,17 +47,17 @@ class SingleAppScalingTest
   private[this] def createStopApp(instances: Int): Unit = {
     Given("a new app")
     val appIdPath: PathId = testBasePath / "/test/app"
-    val app = v2AppProxy(appIdPath, "v1", instances = instances, withHealth = false)
+    val app = appProxy(appIdPath, "v1", instances = instances, withHealth = false)
 
     When("the app gets posted")
-    val createdApp: RestResult[V2AppDefinition] = marathon.createAppV2(app)
+    val createdApp: RestResult[AppDefinition] = marathon.createAppV2(app)
     createdApp.code should be(201) // created
     val deploymentIds: Seq[String] = extractDeploymentIds(createdApp)
     deploymentIds.length should be(1)
     val deploymentId = deploymentIds.head
 
     Then("the deployment should finish eventually")
-    waitForDeploymentId(deploymentId)
+    waitForDeploymentId(deploymentId, (30 + instances).seconds)
 
     When("deleting the app")
     val deleteResult: RestResult[ITDeploymentResult] = marathon.deleteApp(appIdPath, force = true)
@@ -82,7 +79,7 @@ class SingleAppScalingTest
     // for better grepability.
 
     val appIdPath = testBasePath / "/test/app"
-    val appWithManyInstances = v2AppProxy(appIdPath, "v1", instances = 100000, withHealth = false)
+    val appWithManyInstances = appProxy(appIdPath, "v1", instances = 100000, withHealth = false)
     val response = marathon.createAppV2(appWithManyInstances)
     log.info(s"XXX ${response.originalResponse.status}: ${response.originalResponse.entity}")
 
@@ -116,7 +113,7 @@ class SingleAppScalingTest
     ScalingTestResultFiles.writeJson(SingleAppScalingTest.metricsFile, metrics.result())
 
     log.info("XXX suspend")
-    val result = marathon.updateApp(appWithManyInstances.id, V2AppUpdate(instances = Some(0)), force = true).originalResponse
+    val result = marathon.updateApp(appWithManyInstances.id, AppUpdate(instances = Some(0)), force = true).originalResponse
     log.info(s"XXX ${result.status}: ${result.entity}")
 
     WaitTestSupport.waitFor("app suspension", 10.seconds) {
@@ -126,7 +123,7 @@ class SingleAppScalingTest
       val tasksRunning = (currentApp.entityJson \ "app" \ "tasksRunning").as[Int]
       val tasksStaged = (currentApp.entityJson \ "app" \ "tasksStaged").as[Int]
 
-      log.info(s"XXX (suspend) Current instance count: staged $tasksStaged, running $tasksRunning / $instances")
+      log.info(s"XXX (suspendSuccessfully) Current instance count: staged $tasksStaged, running $tasksRunning / $instances")
 
       if (instances == 0) {
         Some(())

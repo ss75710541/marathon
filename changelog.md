@@ -1,10 +1,631 @@
-## Changes from 0.11.0 to 0.12.0
+## Changes from 1.0.0 to 1.1.0
+
+### Recommended Mesos version is 0.28.0
+
+### Overview
+
+#### Readiness Checks for applications
+
+Marathon already has the concept of health checks, which periodically monitor the health of an application. 
+During deployments and runtime configuration updates, however, you might want a temporary monitor that waits for your application to be _ready_. 
+A temporary monitor can be useful for cache-warming, JIT warming, or a migration. Marathon offers a readiness check for these situations.
+
+Readiness checks are performed only during deployment time after a task has been launched.
+The deployment will wait for the readiness check to succeed, before the deployment continues.
+For easy integration with other tools, the result of the readiness checks is available via the deployments endpoint or the app/group listing.
+We are keen to know what you think about this feature.
+
+#### Support for external volumes (experimental)
+
+Marathon applications normally lose their state when they terminate and are relaunched. 
+In some contexts, for instance, if your application uses MySQL, you’ll want your application to preserve its state. 
+You can use an external storage service, such as Amazon's Elastic Block Store (EBS), to create a persistent volume that follows your application instance.
+Using an external storage service allows your apps to be more fault-tolerant. 
+If a host fails, Marathon reschedules your app on another host, along with its associated data, without user intervention.
+
+Please Note that you have to setup your Mesos cluster correctly in order to use this feature.
+
+#### Local Volumes
+
+In prior versions Marathon had to authenticate with Mesos in order to use local volumes.
+While this is still possible, we removed this prerequisite.
+Using this version it is enough to set a framework principal without providing credentials.
+
+### Fixed issues
+
+- #3092 - Delayed applications can appear to be running
+- #3369 - Constraint validation message
+- #3477 - Improve ForceExpunge and restart logic
+- #3519 - The default Docker network should be host
+- #3552 - Editing an App: Switching between JSON and normal Editor produces a broken UX
+- #3564 - Add link to Docker section for Ports
+- #3574 - ResidentTasks: ResourceMatching and Constraints by not considering the volumeMatch's Reserved task when inspecting constraints
+- #3579 - Resident Tasks: Flaky test: restart
+- #3587 - Not specifying "network" config causes mesos to thrash
+- #3597 - Upgrading applications with persistent storage
+- #3612 - Marathon should validate that port names contain only letters and numbers
+- #3614 - Don't allow persistent container paths containing slashes
+- #3624 - Constraints are not working for updating. Respect constraints for same version.
+- #3646 - Liquid Exception in docs 
+- #3652 - Error paths are mapped incorrectly
+- #3654 - PortMapping labels are not being set
+- #3655 - Apps with no volumes reported as stateful
+- #3659 - JSON editor help button does not work in IE11
+- #3663 - Apps created from inside a group have a double forward-slash in their ID
+- #3671 - Scrolling issue with create modal
+
+
+## Changes from 0.15.3 to 1.0.0
+
+### Recommended Mesos version is 0.28.0
+
+### Breaking Changes
+
+#### New default settings for Task Launches
+
+Marathon has a lot of settings to adjust. Our goal is, to have sensible defaults for small and medium size clusters.
+We realized, that some default values are not sufficient in the field and changed them:
+
+- `--launch_tokens` has changed to 100 (was 1000)
+- `--max_tasks_per_offer` has changed to 5 (was 100)
+- `--reconciliation_interval` has changed to 600000 (=10 minutes) (was 300000 (=5 minutes))
+
+#### Updated Auth plugin interface
+
+The Authentication and Authorization plugin interface was redesigned in order to support more sophisticated plugins.
+
+### Overview
+
+#### Support for Persistent Storage
+
+You can now launch tasks that use persistent volumes by specifying volumes either via the UI or the REST API.
+Marathon will reserve all required resources on a matching agent, and subsequently launch a task on that same agent if
+needed. Data within the volume will be retained even after relaunching the associated task. This release provides basic
+functionality which we plan to extend in the future, so use it at your own risk.
+
+Check it out and give us feedback!
+
+See the [feature documentation](https://mesosphere.github.io/marathon/docs/persistent-volumes.html) for details and
+configuration examples.
+
+#### Support for ports metadata
+
+The v2 REST API was extended to support additional ports metadata (protocol, name, and labels) through the
+`portDefinition` application field.  Marathon will pass this new information to Mesos, who will in turn make it
+available for service discovery purposes.
+
+Note: the `portDefinitions` array deprecates the `ports` array.
+
+#### Support for HTTP based plugin extensions
+
+Plugins can now implement HTTP endpoints.
+
+#### Added a leaderDuration metric
+
+The metrics include now a gauge that measures the time elapsed since the last leader election happened. This is helpful
+to diagnose stability problems and how often leader election happens.
+
+#### Better error messages
+API error messages are now more consistent and easier to understand for both humans and computers.
+
+#### Lots of documentation updates
+
+#### Improved Task Kill behavior in deployments by performing kills in batches
+When stopping/restarting an application, Marathon will now perform the kills in batches, in order to avoid overwhelming
+Mesos. The batch size and frequency can be controlled via internal configuration parameters.
+
+#### Support the `TASK_KILLING` state available in Mesos 0.28
+It is possible to make Marathon let Mesos use the `TASK_KILLING` state introduced in Mesos 0.28 using the
+`--enable_features task_killing` flag. Marathon doesn't use this task state yet.
+
+## Fixed issues
+
+- #929 - Allow tcp,udp ports in portMappings
+- #2751 - Commit suicide on ZK exceptions
+- #3091 - App updates hanging on downscales
+- #3169 - Possible to start app with negative resources
+- #3241 - Serverside validation messages are inconsistent
+- #3338 - Path in health checks validation failure results is broken
+- #3367 - Relative paths for dependencies not working anymore
+- #3377 - Marathon should remove the FrameworkId for special Mesos errors
+- #3385 - Creating an empty group using an existing app ID should return 409
+- #3402 - Race conditions in HttpEventActor
+- #3423 - Report kills due to failed healthcheck.
+- #3439 - Relative paths in dependencies should be resolvable.
+- #3575 - Container IP not correctly displayed
+
+## Changes from 0.15.2 to 0.15.3
+
+This is a bug fix release.
+
+## Fixed issues
+
+- #3192 - Adapt default Mem/CPU settings
+- #3251 - Tried to kill an existing app, said it doesn't exist even though it does
+
+
+## Changes from 0.15.1 to 0.15.2
+
+This release includes fixes for two bugs introduced in 0.15.0.
+
+## Fixed issues
+
+- #3172 - "Apply" button is broken (sending both uris and fetch)
+- #3242 - Treat "value" attribute in server-side validation errors as general error
+
+## Changes from 0.15.0 to 0.15.1
+
+This release includes fixes for several bugs introduced in 0.15.0.
+
+## Fixed issues
+
+- #3139 - Marathon 0.15.0 forces redeploy of app all the time
+- #3054 - Empty application attributes are accidentally submited by the UI
+- #3141 - Jetty throws exception during load
+- #3164 - Marathon 0.15 error on bad application id is really bad
+- #3160 - Show 400 error for Constraints field
+- #3140 - breaking API change on portIndex
+
+## Changes from 0.14.0 to 0.15.0
+
+### Recommended Mesos version is 0.26.0
+
+We tested this release against Mesos version 0.26.0. Thus, this is the recommended Mesos version for this
+release.
+
+### Overview
+
+#### Integration of Mesos Fetcher Cache
+
+The v2 REST API was extended to support the Mesos fetcher cache. This allows users to configure a list of resource URIs
+that will be copied into the task sandbox prior to running the task, from either a local or external location. For
+details on the fetcher cache's capabilities, please see the fetcher cache [documentation](http://mesos.apache.org/documentation/latest/fetcher/).
+
+#### Migration from Marathon version 0.7 or lower removed
+
+It is no longer possible to migrate from Marathon versions prior to version 0.8. If you want to upgrade old
+versions we recommend to do a step by step migration using the latest stable version following your installed version
+and so on.
+
+#### haproxy-marathon-bridge is deprecated and removed from the bin directory
+
+In recent versions we published a simple shell script to update haproxy configuration.
+marathon-lb is the successor of this script and can be found here: https://github.com/mesosphere/marathon-lb
+The script can still be found in the examples directory.
+
+### Under the Hood
+
+There have been a lot of interesting changes which we only summarize for now. In the next days, we will
+follow up with extend documentation about them.
+
+#### New metrics
+
+We will provide some cursory introduction into important metrics soon.
+
+#### Limit concurrent status update processing
+
+We now limit the maximum number of concurrently processed task status updates. If the limit is reached,
+further status updates are queued. The queue is limited, too, so that at some point new status updates
+are rejected and not acknowledged. Eventually, Mesos will resend the status updates that we didn't process.
+
+#### Task state tracking redesign
+
+We have rewritten the component that holds the task states: the `TaskTracker`. We removed the old implementation
+that used concurrent data structures, and now use an actor based implementation. The new implementation is easier to
+reason about and allows explicit concurrency management as described in the last section.
+
+#### Explicit queuing of application configuration updates
+
+Marathon has been serializing updates to the app configuration for a while. We made queuing outstanding
+configuration requests explicit and also limited the maximum size of the queue.
+
+#### Optimized /v2/tasks (TXT)
+
+Since some service discovery solutions poll this end-point, performance is important. We improved
+request rates by about 30%.
+
+#### Changes to the threading model
+
+Prior to this release, Marathon would create new threads when needed. Now we switched to a model where we
+have some fixed size thread pools and thread pools that will only grow if too many threads have become blocked.
+This should reduce the number of threads under load.
+
+#### Model validation
+
+Marathon is now utilizing [Accord](http://wix.github.io/accord/), a modern approach to model validation which will
+hopefully leads to better error messages in the future.
+
+### Marathon UI
+
+A number of very convenient features and improvements made it into this release.
+
+#### Perform actions directly from the Applications list
+A new contextual dropdown menu in the Applications list gives access to the most useful actions (scale, destroy,
+suspend, etc.) without having to enter an application's detail view. Additionally, it is now possible to perform scale
+and delete operations on entire Groups.
+
+#### Better feedback
+The feedback dialogs have been completely redesigned to be clearer and more useful, adding three possible color-coded
+severity levels: `info`, `warning` and `error`. In addition, the action button labels have been rephrased for improved
+usability. Buttons that may lead to dangerous actions (such as "force scale") are also not preselected by default anymore.
+
+#### Application Health
+The health status breakdown is now also shown in the application details page.
+
+#### ...and much more
+For the complete set of changes, please refer to the [Marathon UI CHANGELOG](https://github.com/mesosphere/marathon-ui/blob/master/CHANGELOG.md)
+
+### Fixed issues
+- #2918 - Incorrect Step-wise timers in TaskStatusUpdateProcessorImpl
+- #2919 - StateMetrics.timed(Read/Write) incorrectly used for methods returning Futures
+- #2951 - Incorrect Constraint lead to an application exception, but should give an error response
+- #2957 - Unbounded ThreadPool is used for too many operations
+- #2982 - Double offerLeadership invocation after driver failure
+- #2989 - Report task count metrics
+- #2868 - Marathon sometimes tries (and fails) to assign duplicated service ports
+- #2938 - Don't log giant port lists
+- #2855 - Create app failed when there're multiple same word in the app id
+- #3051 - Can't add dynamic ports using PUT
+- #2892 - Version in task detail component shouldn't be localised
+- #2893 - App page component should display the right number of tasks
+- #2949 - AjaxWrapper does't handle TypeError correctly
+- #3605 - Prevent ctrl-c keyboard shortcut from showing the Create modal dialog
+- #3054 - Empty - non set- application attributes are accidentaly submited by the UI
+- #3064 - Labels dropdown menu not showing up
+- #3063 - After scaling a healthy app to 0, it appears to be Infinity% overcapacity
+
+## Changes from 0.13.0 to 0.14.0
+
+### Recommended Mesos version is 0.26.0
+
+We tested this release against Mesos version 0.26.0. Thus, this is the recommended Mesos version for this
+release.
+
+### Breaking Changes
+Marathon will not start up if there's an error registering with the current framework id. The previous behaviour was to
+register as a new framework. We changed this in order to avoid orphaning the running tasks in case of transient errors.
+
+### Overview
+
+#### Expose additional app definition variables
+The following environment variables are now available to the tasks:
+
+- `MARATHON_APP_RESOURCE_CPUS` contains the value of the app definition `cpus` value.
+- `MARATHON_APP_RESOURCE_MEM` contains the value of the app definition `mem` value, expressed in megabytes.
+- `MARATHON_APP_RESOURCE_DISK`  value of the app definition `disk` value, expressed in megabytes.
+- `MARATHON_APP_LABELS` contains list of labels of the corresponding app definition. For example: `label1 label2 label3`
+- `MARATHON_APP_LABEL_NAME` contains value of label "NAME" of the corresponding app definition.
+
+#### Health Checks: allow port instead of portIndex
+Previously, the port to be used for health checks could only be specified by supplying a port index.  Now it
+can also be specified directly using the new `port` field.
+
+#### Improved search in the UI
+Previously, the user could search through applications using a field which filtered all applications.
+In 0.14.0 we replace the filter with a search which leads to a detailed search result view. There are
+various improvements in the search interaction, including the user being returned to their former group
+context after the search term has been cleared.
+
+#### Better health status feedback
+The health bars in the application list view are now provided in the application detail view. The tooltips
+in the overview have been consolidated to make them easier to understand. The styles of the deployment table
+have been updated inline with the applications list view. Additionally, it's possible to filter apps by their
+health status in the UI.
+
+#### IP-per-task UI
+Some changes have been made in order to support IP-per-task in the API. The relevant part of the app
+definition is exposed in the configuration page, and the `ipAddresses` field is integrated in the task
+detail view.
+
+#### Direct task log downloads for in the UI
+The `stderr` and `stdout` logs can now be downloaded directly from the task view in the UI. The contents of
+each task's sandbox is displayed and files are offered for direct download.
+
+#### Health Checks: allow port instead of portIndex
+Previously, the port to be used for health checks could only be specified by supplying a port index.  Now it
+can also be specified directly using the new `port` field.
+
+#### EXPERIMENTAL: IP-per-task support
+
+This can drastically simplify service discovery, since you can use
+[mesos-dns](https://github.com/mesosphere/mesos-dns) to rely on DNS for service discovery. This enables your
+applications to use address-only (A) DNS records in combination with known ports to connect to other
+services -- as you would do it in a traditional static cluster environment.
+
+You can request an IP-per-task with default settings like this:
+
+```javascript
+{
+  "id": "/i-have-my-own-ip",
+  // ... more settings ...
+  "ipAddress": {}
+}
+```
+
+Marathon passes down the request for the IP to Mesos. You have to make sure that you installed & configured
+the appropriate
+[Network Isolation Modules](https://docs.google.com/document/d/17mXtAmdAXcNBwp_JfrxmZcQrs7EO6ancSbejrqjLQ0g) &
+IP Access Manager (IPAM) modules in Mesos. The Marathon support for this feature requires Mesos v0.26.
+
+If an application requires IP-per-task, then it can not request ports to be allocated in the slave.
+
+Currently, this feature does not work in combination with Docker containers. We might still change some
+aspects of the API and we appreciate your feedback.
+
+#### Improved migrations from v0.11
+It is now possible to resume interrupted ZooKeeper state migrations. That means that Marathon can now recover from
+transient errors during the migration process.
+
+#### EXPERIMENTAL: Network security groups
+
+If your IP Access Manager (IPAM) supports it, you can refine your IP configuration using network security
+groups and labels:
+
+```javascript
+{
+  "id": "/i-have-my-own-ip",
+  // ... more settings ...
+  "ipAddress": {
+    "groups": ["production"],
+    "labels": {
+      "some-meaningful-config": "potentially interpreted by the IPAM"
+    }
+  }
+}
+```
+
+Network security groups only allow network traffic between tasks that have at least one of their configured
+groups in common. This makes it easy to disallow your staging environment to interfere with production
+traffic.
+
+#### EXPERIMENTAL: Service Discovery
+
+If an application requires IP-per-task, then it can not request ports to be allocated in the slave. It is
+however still possible to describe the ports that the Application's tasks expose:
+
+```javascript
+{
+  "id": "/i-have-my-own-ip",
+  // ... more settings ...
+  "ipAddress": {
+    "discovery": {
+      "ports": [
+        { "number": 80, "name": "http", "protocol": "tcp" }
+      ]
+    }
+      // ... more settings ...
+  }
+}
+```
+
+Marathon will pass down this information to Mesos (inside the DiscoveryInfo message) when starting new tasks,
+[mesos-dns](https://github.com/mesosphere/mesos-dns) will then expose this information through IN SRV records.
+
+In the future Marathon will also fill in the DiscoveryInfo message for applications that don't require
+IP-per-task.
+
+### Fixed issues
+- #2405 - Migration of ZK State to 0.13/0.14 does not work
+- #2505 - Provide memory and cpu as environment variables in docker containers
+- #2509 - Leadership not abdicated on ZK connection loss
+- #2558 - If driver finishes with error, Marathon does not abdicate
+- #2620 - Remove dubious functionality to remove orphaned tasks from TaskTracker storage
+- #2647 - Application cmd override causes application to restart repeatedly
+- #2720 - Disabled button has wrong colour
+- #2734 - Invalid validation for multiple ports
+- #2755 - Memory leak in Marathon UI
+- #2812 - Cannot change configuration of Marathon app after deployment
+- #2818 - Remove `Set[MarathonTask]` from TaskTracker
+- #2820 - Improve --[disable_]ha documentation
+- #2865 - Multiple explicit ports are mixed up in task json
+- #2870 - Marathon healthchecks on wrong address
+- #2872 - Update IPAddress of a running app is not possible
+
+## Changes from 0.11.1 to 0.13.0
+
+### Breaking Changes
+
+#### Tasks keys and storage format in ZooKeeper
+Marathon tasks are now stored in ZooKeeper using a generic implementation that has been around for
+a while. In order to accomplish this, the keys under which tasks are stored had to be migrated and
+do no longer contain redundant information about the app id. Additionally, the task storage format
+in Zookeeper changed as well. Previous versions of Marathon will **not** be able to read the tasks'
+status once these are migrated. Please backup your ZooKeeper state before migrating to this version.
+
+#### Zookeeper Compression
+ZK nodes larger than a certain threshold will now be compressed. This allows Marathon to handle
+more apps and groups, but breaks backwards compatibility, because older versions of Marathon are
+not able to parse compressed nodes. You can define the threshold with `--zk_compression_threshold`
+which defaults to 64KB.
+To disable this feature, start Marathon with the `--disable_zk_compression` flag.
+
+#### Use logback as logging backend
+We moved from log4j to [Logback](http://logback.qos.ch) backend.
+If you are using custom log4j properties, you will have to migrate them to a logback configuration.
+The log4j.properties to logback.xml [Translator](http://logback.qos.ch/translator/) can help you with that.
+
+
+### Overview
+
+#### Major changes to the UI layout
+This version introduces major changes to the layout. In particular, the application list has been redesigned.
+- A filter sidebar is introduced with the ability to combine filters or clear them.
+  - Filter by application status
+  - Filter by labels
+- The application list now handles groups
+- Groups are shown at the top of the application list
+- A group route is introduced to display the contents of a group in the application list
+- Breadcrumbs show the groups structure
+- Breadcrumbs will be folded to "..." when there isn't room to render them in full
+- App names are now shown in the app page and app list instead of app IDs
+- The complete app ID is available in the configuration tab
+- Application labels are shown by the application name in the application list
+- Endpoints are shown in the tasks detail page
+- The memory column shows the total amount of memory used by an application with a human readable unit
+- The application status is displayed with a colored icon
+- The instances and health columns have been combined into one called "Running Instances"
+- The control buttons on the application page are shown on the left and are redesigned
+
+#### Enable extensions to Marathon via Plugins
+This version of Marathon ships with the ability to load and use external plugins.
+With this functionality in place, you can extend and adapt functionality in Marathon to your specific needs.
+We start this adventure with pluggable authentication and authorization hooks, but want to extend this
+to various functionality inside of Marathon.
+
+To start with this feature, please read [Plugin Documentation](https://mesosphere.github.io/marathon/docs/plugin.html)
+or see our [Example Plugins](https://github.com/mesosphere/marathon-example-plugins).
+
+Please check it out and give us feedback!
+We are also interested in any recommendations for upcoming plugin hooks.
+
+#### Pluggable Authentication and Authorization hooks
+The probably most wanted feature in Marathon is the ability to have Authentication and Authorization.
+Since this topic has so distinct requirements for different organizations, it is a perfect match for our new plugin mechanism.
+This version now implements all the necessary hooks needed to secure most external interfaces to your specific needs.
+If you are interested in a very simple implementation, you can look into the [Example Auth Plugin](https://github.com/mesosphere/marathon-example-plugins/tree/master/auth)
+
+#### Persistent Store Cache
+All entities in the persistent store (ZK) are loaded into a cache during leader election.
+Subsequent reads are delivered from that cache. Updates to entities also update the cache.
+This cache should improve read access time significantly.
+You can disable the cache with `--disable_store_cache`.
+
+#### Greatly improved API Reference
+With this release we integrated [RAML](http://raml.org) based API documentation.
+The `/help` endpoint uses the [RAML Console](https://github.com/mulesoft/api-console) to show the API Reference.
+The Github pages documentation now also uses that specification.
+We had a lot of feedback for documentation improvements - so please give us your thoughts on that.
+
+#### Graphite and DataDog reporter
+We collect a lot of metrics in Marathon.
+You can collect those metrics via the `/metrics` endpoint.
+With those reporters you can transfer the data into either Graphite or DataDog and see the values over time.
+
+#### Force action
+Previous versions of the UI did not support sending the `?force=true` query parameter when the
+user submitted a scale action or when changing an app's configuration. These actions would be
+rejected if the app was locked by one or more deployments.
+In this version, the user is presented with a modal confirmation dialog when a force action is
+required to proceed.
+
+#### Authentication errors
+Authentication errors (401, 403) are now notified to the user by means of modal dialogs.
+
+#### Improved application modal
+The application create/edit modal has undergone significant architectural and UX improvements.
+It is now possible to specify application labels, accepted resource roles, the user field and
+health checks. Additionally, a more fine-grained input validation and error handling has been
+implemented.
+
+#### Bookmarkable search results
+The text entered in the filter bar is immediately stored in the browser's URL bar, which makes
+search results bookmarkable for quicker access.
+
+#### Application detail view: configuration panel
+The Configuration panel in the application's detail view sees a number of improvements and bug
+fixes. The application labels and dependencies are now also shown, and the lifetime durations
+are shown as "humanized".
+
+#### Define the number of maximum apps
+A new flag (`--max_apps`) has been introduced, which allows Marathon to limit the maximum number
+of applications that may be created. This limit is disabled by default.
+
+
+### Under the Hood
+
+#### Introduce a plugin-interface module
+We now publish a separate marathon-plugin-interface.jar with every Marathon release on our maven repository.
+This artifact holds all the inerfaces needed to develop your own Marathon plugin.
+
+#### Consolidate logging to use slf4j
+We moved completely to slf4j as Logging API.
+
+#### Several performance improvements
+* A separate thread pool is used for health check operations
+* Group and app creation is more efficient.
+
+#### Introduce configurable zk node compression
+We introduced zk compression which improves performance significantly. Compression can be turned on/off via cmd line flags and is enabled by default.
+
+#### Tasks are now stored via the standard EntityRepository
+The storage of tasks was handled separately in previous versions of Marathon.
+With this change in place we handle all entities via the same interface.
+This allows for globally available extensions (e.g. the store cache).
+
 
 ### Fixed Issues
-
+- #1429 - Non-integer is accepted as instance count
+- #1563 - Inconsistent /help <-> rest-api.md documentation
+- #1588 - Incorrect healthcheck triggers 500 Server error
+- #1730 - Add uptime metric
+- #1835 - No error received when a DELETE is sent to a task in deployment
+- #1904 - App scaled below minimumHealthCapacity
+- #1985 - Docker container settings dialog needs better error handling
+- #1988 - Move from log4j to logback
+- #2157 - Row is off-centre if upper row is empty in lists
+- #2174 - REST api returns code 500 for invalid JSON and fails silently to proxy the error
+- #2177 - Error Handling/validation required for COMMAND health check
+- #2202 - App not present right after its creation
+- #2216 - Do not show (x) in keyword search input until user begins typing
+- #2256 - Misleading log message if offer doesn't match because of filtered roles
+- #2262 - Better error handling on application configuration change/creation
+- #2264 - Cannot submit job with id containing internal slashes
+- #2266 - Link "Mesos details" is broken
+- #2270 - Overlapping text in Deployment view
+- #2280 - Scaling check ignores task versions
 - #2294 - Make boolean command line flags use Scallop's 'toggle'
+- #2299 - Writes to EntityRepositories should be visible in following reads
+- #2307 - Investigate MarathonSchedulerServiceTest failure
+- #2338 - Parameters in the Docker container settings are not taken into account
+- #2353 - Never recover from race condition when scaling up
+- #2360 - PUT /v2/groups triggers restart while PUT /v2/apps does not
+- #2369 - Large file URIs cause "Failed to fetch all URIs for container" error when pulling from HDFS
+- #2381 - Marathon stops apps instead of restart
+- #2398 - Blank docker image is created in app modal
+- #2402 - Runtime privilege checkbox does not work
+- #2405 - Migration of ZK State to 0.13 does not work
+- #2421 - Invalid calling object (Win 8 IE10, Win 7 IE11)
+- #2422 - Handle apps error response attribute on HTTP 422
+- #2441 - AppRestart deployments don't wait for old tasks to be killed
+- #2494 - Remove mentions of Marathon gem from docs
+- #2459 - Framework Id not visible in the UI
+- #2477 - Marathon forgets all tasks on restart
+
+------------------------------------------------------------
+
+## Changes from 0.11.0 to 0.11.1
+
+### Overview
+
+This release includes fixes for critical bugs introduced in v0.11.0 and several performance
+improvements that allow Marathon to handle a larger number of groups and applications.
+
+#### Performance Improvements
+This release introduces the following improvements which allow Marathon to handle a larger number of
+applications. Because this is a bugfix release and they are not backwards compatible, they are are
+available, but disabled by default:
+
+* ZK nodes larger than a certain threshold can now be compressed. This allows Marathon to handle
+  more apps and groups, but breaks backwards compatibility, because older versions of Marathon are
+  not able to parse compressed nodes.
+
+  To enable this feature, start Marathon with the `--zk_compression` flag.
+* A new flag (`--max_apps`) has been introduced, which allows Marathon to limit the maximum number
+  of applications that may be created. This limit is disabled by default, but we performed scale
+  tests on this release and recommend setting the limit to 500.
+
+#### Fixed issues
+- #2353 - Never recover from race condition when scaling up
+- #2369 - Large file URIs cause "Failed to fetch all URIs for container" error when pulling from HDFS
+- #2360 - PUT /v2/groups triggers restart while PUT /v2/apps does not
+- #2381 - Marathon stops apps instead of restart
+- #2402 - Runtime privilege checkbox does not work
+- #2398 - Blank docker image is created in app modal
+- #2338 - Parameters in the Docker container settings are not taken into account
 
 ## Changes from 0.10.0 to 0.11.0
+
+Attention! There have been some severe issues reported for 0.11. We will release fixes for them in [0.11.1](https://github.com/mesosphere/marathon/milestones/0.11.1).
 
 ### Breaking Changes
 
@@ -234,6 +855,11 @@ In the new Marathon version, the backoff delay is never reset automatically. You
 
 Any task of an app definition with a docker image attribute (`container.docker.image`) will now be started with
 an environment variable `MARATHON_APP_DOCKER_IMAGE` containing its value.
+
+#### Define the maximum number of apps that can be created.
+
+This version of Marathon adds the capability to restrict the maximum number of apps, that may be created.
+Use the `--max_apps` command line parameter to define this number. It is disabled per default.
 
 ### Important bug fixes
 

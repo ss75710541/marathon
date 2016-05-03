@@ -2,7 +2,6 @@ package mesosphere.marathon.core.launchqueue.impl
 
 import akka.actor.SupervisorStrategy.Stop
 import akka.actor.{
-  PoisonPill,
   Terminated,
   Actor,
   ActorLogging,
@@ -15,8 +14,9 @@ import akka.event.LoggingReceive
 import akka.pattern.{ ask, pipe }
 import akka.util.Timeout
 import mesosphere.marathon.core.launchqueue.{ LaunchQueueConfig, LaunchQueue }
+import mesosphere.marathon.core.task.bus.TaskChangeObservables.TaskChanged
 import mesosphere.marathon.state.{ AppDefinition, PathId }
-import LaunchQueue.QueuedTaskCount
+import LaunchQueue.QueuedTaskInfo
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -62,7 +62,9 @@ private[impl] class LaunchQueueActor(
   override def receive: Receive = LoggingReceive {
     Seq(
       receiveHandlePurging,
+      receiveTaskUpdateToSuspendedActor,
       receiveMessagesToSuspendedActor,
+      receiveTaskUpdate,
       receiveHandleNormalCommands
     ).reduce(_.orElse[Any, Unit](_))
   }
@@ -86,7 +88,7 @@ private[impl] class LaunchQueueActor(
             suspendedLaunchersMessages(actorRef) :+ DeferredMessage(sender(), ConfirmPurge)
           suspendedLaunchersMessages += actorRef -> deferredMessages
           suspendedLauncherPathIds += appId
-          actorRef ! PoisonPill
+          actorRef ! AppTaskLauncherActor.Stop
         case None => sender() ! (())
       }
 
@@ -112,9 +114,21 @@ private[impl] class LaunchQueueActor(
       }
   }
 
+  private[this] def receiveTaskUpdateToSuspendedActor: Receive = {
+    case taskChanged: TaskChanged if suspendedLauncherPathIds(taskChanged.appId) =>
+      // Do not defer. If an AppTaskLauncherActor restarts, it retrieves a new task list.
+      // If we defer this, there is a potential deadlock (resolved by timeout):
+      //   * AppTaskLauncher waits for in-flight tasks
+      //   * TaskOp gets processed and one of the update steps calls this here
+      //   * ... blocked until timeout ...
+      //   * The task launch notification (that the AppTaskLauncherActor waits for) gets sent to the actor
+      sender() ! None
+  }
+
   private[this] def receiveMessagesToSuspendedActor: Receive = {
     case msg @ Count(appId) if suspendedLauncherPathIds(appId) =>
-      deferMessageToSuspendedActor(msg, appId)
+      // Deferring this would also block List.
+      sender() ! None
 
     case msg @ Add(app, count) if suspendedLauncherPathIds(app.id) =>
       deferMessageToSuspendedActor(msg, app.id)
@@ -130,21 +144,33 @@ private[impl] class LaunchQueueActor(
     suspendedLaunchersMessages += actorRef -> deferredMessages
   }
 
+  private[this] def receiveTaskUpdate: Receive = {
+    case taskChanged: TaskChanged =>
+      import context.dispatcher
+      launchers.get(taskChanged.appId) match {
+        case Some(actorRef) =>
+          val eventualCount: Future[QueuedTaskInfo] =
+            (actorRef ? taskChanged).mapTo[QueuedTaskInfo]
+          eventualCount.map(Some(_)).pipeTo(sender())
+        case None => sender() ! None
+      }
+  }
+
   private[this] def receiveHandleNormalCommands: Receive = {
     case List =>
       import context.dispatcher
       val scatter = launchers
         .keys
-        .map(appId => (self ? Count(appId)).mapTo[Option[QueuedTaskCount]])
-      val gather: Future[Seq[QueuedTaskCount]] = Future.sequence(scatter).map(_.flatten.to[Seq])
+        .map(appId => (self ? Count(appId)).mapTo[Option[QueuedTaskInfo]])
+      val gather: Future[Seq[QueuedTaskInfo]] = Future.sequence(scatter).map(_.flatten.to[Seq])
       gather.pipeTo(sender())
 
     case Count(appId) =>
       import context.dispatcher
       launchers.get(appId) match {
         case Some(actorRef) =>
-          val eventualCount: Future[QueuedTaskCount] =
-            (actorRef ? AppTaskLauncherActor.GetCount).mapTo[QueuedTaskCount]
+          val eventualCount: Future[QueuedTaskInfo] =
+            (actorRef ? AppTaskLauncherActor.GetCount).mapTo[QueuedTaskInfo]
           eventualCount.map(Some(_)).pipeTo(sender())
         case None => sender() ! None
       }
@@ -154,14 +180,14 @@ private[impl] class LaunchQueueActor(
         case None =>
           import context.dispatcher
           val actorRef = createAppTaskLauncher(app, count)
-          val eventualCount: Future[QueuedTaskCount] =
-            (actorRef ? AppTaskLauncherActor.GetCount).mapTo[QueuedTaskCount]
+          val eventualCount: Future[QueuedTaskInfo] =
+            (actorRef ? AppTaskLauncherActor.GetCount).mapTo[QueuedTaskInfo]
           eventualCount.map(_ => ()).pipeTo(sender())
 
         case Some(actorRef) =>
           import context.dispatcher
-          val eventualCount: Future[QueuedTaskCount] =
-            (actorRef ? AppTaskLauncherActor.AddTasks(app, count)).mapTo[QueuedTaskCount]
+          val eventualCount: Future[QueuedTaskInfo] =
+            (actorRef ? AppTaskLauncherActor.AddTasks(app, count)).mapTo[QueuedTaskInfo]
           eventualCount.map(_ => ()).pipeTo(sender())
       }
 
@@ -180,7 +206,8 @@ private[impl] class LaunchQueueActor(
 
   override def supervisorStrategy: SupervisorStrategy = OneForOneStrategy() {
     case NonFatal(e) =>
-      // We periodically check if scaling is needed, so we should recover. TODO: Speedup
+      // We periodically check if scaling is needed, so we should eventually recover.
+      // TODO: Spead up recovery, e.g. by initiating a scale check.
       // Just restarting an AppTaskLauncherActor will potentially lead to starting too many tasks.
       Stop
     case m: Any => SupervisorStrategy.defaultDecider(m)

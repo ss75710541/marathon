@@ -1,10 +1,10 @@
 package mesosphere.marathon.upgrade
 
+import akka.actor.Props
 import akka.event.EventStream
-import mesosphere.marathon.Protos.MarathonTask
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.state.PathId
-import mesosphere.marathon.tasks.TaskTracker
-import org.apache.mesos.Protos.{ TaskID, TaskState, TaskStatus }
 import org.apache.mesos.SchedulerDriver
 
 import scala.collection.mutable
@@ -15,17 +15,23 @@ class TaskKillActor(
     val appId: PathId,
     val taskTracker: TaskTracker,
     val eventBus: EventStream,
-    tasksToKill: Set[MarathonTask],
+    tasksToKill: Iterable[Task.Id],
+    val config: UpgradeConfig,
     val promise: Promise[Unit]) extends StoppingBehavior {
 
-  var idsToKill = tasksToKill.map(_.getId).to[mutable.Set]
+  override var idsToKill = tasksToKill.to[mutable.Set]
 
-  def initializeStop(): Unit = {
-    log.info(s"Killing ${tasksToKill.size} instances")
-    for (task <- tasksToKill) {
-      driver.killTask(taskId(task.getId))
-    }
+}
+
+object TaskKillActor {
+  def props(
+    driver: SchedulerDriver,
+    appId: PathId,
+    taskTracker: TaskTracker,
+    eventBus: EventStream,
+    tasksToKill: Iterable[Task.Id],
+    config: UpgradeConfig,
+    promise: Promise[Unit]): Props = {
+    Props(new TaskKillActor(driver, appId, taskTracker, eventBus, tasksToKill, config, promise))
   }
-
-  private def taskId(id: String) = TaskID.newBuilder().setValue(id).build()
 }

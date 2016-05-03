@@ -2,14 +2,13 @@ package mesosphere.marathon.api.v2
 
 import mesosphere.marathon.api.TestAuthFixture
 import mesosphere.marathon.api.v2.json.Formats._
-import mesosphere.marathon.api.v2.json.V2AppDefinition
 import mesosphere.marathon.core.base.{ Clock, ConstantClock }
 import mesosphere.marathon.core.launchqueue.LaunchQueue
-import mesosphere.marathon.core.launchqueue.LaunchQueue.QueuedTaskCount
-import mesosphere.marathon.state.AppDefinition
+import mesosphere.marathon.core.launchqueue.LaunchQueue.QueuedTaskInfo
+import mesosphere.marathon.state.{ Timestamp, AppDefinition }
 import mesosphere.marathon.state.PathId._
+import mesosphere.marathon.test.Mockito
 import mesosphere.marathon.{ MarathonConf, MarathonSpec }
-import mesosphere.util.Mockito
 import org.scalatest.{ GivenWhenThen, Matchers }
 import play.api.libs.json._
 
@@ -22,23 +21,23 @@ class QueueResourceTest extends MarathonSpec with Matchers with Mockito with Giv
     //given
     val app = AppDefinition(id = "app".toRootPath)
     queue.list returns Seq(
-      QueuedTaskCount(
-        app, tasksLeftToLaunch = 23, taskLaunchesInFlight = 0, tasksLaunchedOrRunning = 0, clock.now() + 100.seconds
+      QueuedTaskInfo(
+        app, tasksLeftToLaunch = 23, taskLaunchesInFlight = 0, tasksLaunched = 0, clock.now() + 100.seconds
       )
     )
 
     //when
-    val response = queueResource.index(auth.request, auth.response)
+    val response = queueResource.index(auth.request)
 
     //then
     response.getStatus should be(200)
     val json = Json.parse(response.getEntity.asInstanceOf[String])
     val queuedApps = (json \ "queue").as[Seq[JsObject]]
-    val jsonApp1 = queuedApps.find(_ \ "app" \ "id" == JsString("/app")).get
+    val jsonApp1 = queuedApps.find { apps => (apps \ "app" \ "id").as[String] == "/app" }.get
 
-    jsonApp1 \ "app" should be(Json.toJson(V2AppDefinition(app)))
-    jsonApp1 \ "count" should be(Json.toJson(23))
-    jsonApp1 \ "delay" \ "overdue" should be(Json.toJson(false))
+    (jsonApp1 \ "app").as[AppDefinition] should be(app)
+    (jsonApp1 \ "count").as[Int] should be(23)
+    (jsonApp1 \ "delay" \ "overdue").as[Boolean] should be(false)
     (jsonApp1 \ "delay" \ "timeLeftSeconds").as[Int] should be(100) //the deadline holds the current time...
   }
 
@@ -46,49 +45,49 @@ class QueueResourceTest extends MarathonSpec with Matchers with Mockito with Giv
     //given
     val app = AppDefinition(id = "app".toRootPath)
     queue.list returns Seq(
-      QueuedTaskCount(
-        app, tasksLeftToLaunch = 23, taskLaunchesInFlight = 0, tasksLaunchedOrRunning = 0,
+      QueuedTaskInfo(
+        app, tasksLeftToLaunch = 23, taskLaunchesInFlight = 0, tasksLaunched = 0,
         backOffUntil = clock.now() - 100.seconds
       )
     )
     //when
-    val response = queueResource.index(auth.request, auth.response)
+    val response = queueResource.index(auth.request)
 
     //then
     response.getStatus should be(200)
     val json = Json.parse(response.getEntity.asInstanceOf[String])
     val queuedApps = (json \ "queue").as[Seq[JsObject]]
-    val jsonApp1 = queuedApps.find(_ \ "app" \ "id" == JsString("/app")).get
+    val jsonApp1 = queuedApps.find { apps => (apps \ "app" \ "id").get == JsString("/app") }.get
 
-    jsonApp1 \ "app" should be(Json.toJson(V2AppDefinition(app)))
-    jsonApp1 \ "count" should be(Json.toJson(23))
-    jsonApp1 \ "delay" \ "overdue" should be(Json.toJson(true))
-    jsonApp1 \ "delay" \ "timeLeftSeconds" should be(Json.toJson(0))
+    (jsonApp1 \ "app").as[AppDefinition] should be(app)
+    (jsonApp1 \ "count").as[Int] should be(23)
+    (jsonApp1 \ "delay" \ "overdue").as[Boolean] should be(true)
+    (jsonApp1 \ "delay" \ "timeLeftSeconds").as[Int] should be(0)
   }
 
-  test("unknown application backoff can not be removed from the taskqueue") {
+  test("unknown application backoff can not be removed from the launch queue") {
     //given
     queue.list returns Seq.empty
 
     //when
-    val response = queueResource.resetDelay("unknown", auth.request, auth.response)
+    val response = queueResource.resetDelay("unknown", auth.request)
 
     //then
     response.getStatus should be(404)
   }
 
-  test("application backoff can be removed from the taskqueue") {
+  test("application backoff can be removed from the launch queue") {
     //given
     val app = AppDefinition(id = "app".toRootPath)
     queue.list returns Seq(
-      QueuedTaskCount(
-        app, tasksLeftToLaunch = 23, taskLaunchesInFlight = 0, tasksLaunchedOrRunning = 0,
+      QueuedTaskInfo(
+        app, tasksLeftToLaunch = 23, taskLaunchesInFlight = 0, tasksLaunched = 0,
         backOffUntil = clock.now() + 100.seconds
       )
     )
 
     //when
-    val response = queueResource.resetDelay("app", auth.request, auth.response)
+    val response = queueResource.resetDelay("app", auth.request)
 
     //then
     response.getStatus should be(204)
@@ -99,30 +98,46 @@ class QueueResourceTest extends MarathonSpec with Matchers with Mockito with Giv
     Given("An unauthenticated request")
     auth.authenticated = false
     val req = auth.request
-    val resp = auth.response
 
     When(s"the index is fetched")
-    val index = queueResource.index(req, resp)
+    val index = queueResource.index(req)
     Then("we receive a NotAuthenticated response")
     index.getStatus should be(auth.NotAuthenticatedStatus)
 
     When(s"one delay is reset")
-    val resetDelay = queueResource.resetDelay("appId", req, resp)
+    val resetDelay = queueResource.resetDelay("appId", req)
     Then("we receive a NotAuthenticated response")
     resetDelay.getStatus should be(auth.NotAuthenticatedStatus)
   }
 
-  test("access without authorization is denied") {
+  test("access without authorization is denied if the app is in the queue") {
     Given("An unauthorized request")
     auth.authenticated = true
     auth.authorized = false
     val req = auth.request
-    val resp = auth.response
 
     When(s"one delay is reset")
-    val resetDelay = queueResource.resetDelay("appId", req, resp)
+    val appId = "appId".toRootPath
+    val taskCount = LaunchQueue.QueuedTaskInfo(AppDefinition(appId), 0, 0, 0, Timestamp.now())
+    queue.list returns Seq(taskCount)
+
+    val resetDelay = queueResource.resetDelay("appId", req)
     Then("we receive a not authorized response")
     resetDelay.getStatus should be(auth.UnauthorizedStatus)
+  }
+
+  test("access without authorization leads to a 404 if the app is not in the queue") {
+    Given("An unauthorized request")
+    auth.authenticated = true
+    auth.authorized = false
+    val req = auth.request
+
+    When(s"one delay is reset")
+    queue.list returns Seq.empty
+
+    val resetDelay = queueResource.resetDelay("appId", req)
+    Then("we receive a not authorized response")
+    resetDelay.getStatus should be(404)
   }
 
   var clock: Clock = _

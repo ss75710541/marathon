@@ -50,6 +50,7 @@ class MarathonRestModule extends BaseRestModule {
     bind(classOf[v2.DeploymentsResource]).in(Scopes.SINGLETON)
     bind(classOf[v2.ArtifactsResource]).in(Scopes.SINGLETON)
     bind(classOf[v2.SchemaResource]).in(Scopes.SINGLETON)
+    bind(classOf[v2.PluginsResource]).in(Scopes.SINGLETON)
 
     install(new LeaderProxyFilterModule)
 
@@ -65,7 +66,10 @@ class MarathonRestModule extends BaseRestModule {
     serve("/v2/events").`with`(classOf[HttpEventStreamServlet])
 
     bind(classOf[WebJarServlet]).in(Scopes.SINGLETON)
-    serve("/", "/ui", "/ui/*").`with`(classOf[WebJarServlet])
+    serve("/", "/ui", "/ui/*", "/help", "/api-console", "/api-console/*").`with`(classOf[WebJarServlet])
+
+    bind(classOf[PublicServlet]).in(Scopes.SINGLETON)
+    serve("/public/*").`with`(classOf[PublicServlet])
 
     super.configureServlets()
   }

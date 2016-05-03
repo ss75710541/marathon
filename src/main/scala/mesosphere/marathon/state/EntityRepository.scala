@@ -2,13 +2,11 @@ package mesosphere.marathon.state
 
 import scala.concurrent.Future
 
-trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
-  import mesosphere.util.ThreadPoolContext.context
+trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics with VersionedEntry {
+  import scala.concurrent.ExecutionContext.Implicits.global
 
   protected def store: EntityStore[T]
   protected def maxVersions: Option[Int]
-
-  protected val ID_DELIMITER = ":"
 
   /**
     * Returns the most recently stored entity with the supplied id.
@@ -20,8 +18,7 @@ trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
     * Returns the entity with the supplied id and version.
     */
   protected def entity(id: String, version: Timestamp): Future[Option[T]] = timedRead {
-    val key = id + ID_DELIMITER + version.toString
-    this.store.fetch(key)
+    this.store.fetch(versionKey(id, version))
   }
 
   /**
@@ -30,7 +27,7 @@ trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
   def allIds(): Future[Iterable[String]] = timedRead {
     this.store.names().map { names =>
       names.collect {
-        case name: String if !name.contains(ID_DELIMITER) => name
+        case name: String if noVersionKey(name) => name
       }
     }
   }
@@ -50,7 +47,7 @@ trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
     * Returns the timestamp of each stored version of the entity with the supplied id.
     */
   def listVersions(id: String): Future[Iterable[Timestamp]] = timedRead {
-    val prefix = id + ID_DELIMITER
+    val prefix = versionKeyPrefix(id)
     this.store.names().map { names =>
       names.collect {
         case name: String if name.startsWith(prefix) =>
@@ -65,18 +62,17 @@ trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
   def expunge(id: String): Future[Iterable[Boolean]] = timedWrite {
     listVersions(id).flatMap { timestamps =>
       val versionsDeleteResult = timestamps.map { timestamp =>
-        val key = id + ID_DELIMITER + timestamp.toString
-        store.expunge(key)
+        store.expunge(versionKey(id, timestamp))
       }
       val currentDeleteResult = store.expunge(id)
       Future.sequence(currentDeleteResult +: versionsDeleteResult.toSeq)
     }
   }
 
-  private[this] def limitNumberOfVersions(id: String): Future[Iterable[Boolean]] = timedWrite {
+  private[this] def limitNumberOfVersions(id: String): Future[Iterable[Boolean]] = {
     val maximum = maxVersions.map { maximum =>
       listVersions(id).flatMap { versions =>
-        Future.sequence(versions.drop(maximum).map(version => store.expunge(id + ID_DELIMITER + version)))
+        Future.sequence(versions.drop(maximum).map(version => store.expunge(versionKey(id, version))))
       }
     }
     maximum.getOrElse(Future.successful(Nil))
@@ -85,7 +81,7 @@ trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
   protected def storeWithVersion(id: String, version: Timestamp, t: T): Future[T] = {
     for {
       alias <- storeByName(id, t)
-      result <- storeByName(id + ID_DELIMITER + version, t)
+      result <- storeByName(versionKey(id, version), t)
       limit <- limitNumberOfVersions(id)
     } yield result
   }
@@ -93,7 +89,7 @@ trait EntityRepository[T <: MarathonState[_, T]] extends StateMetrics {
   /**
     * Stores the given entity directly under the given id without a second versioned store.
     */
-  protected def storeByName(id: String, t: T): Future[T] = {
+  protected def storeByName(id: String, t: T): Future[T] = timedWrite {
     this.store.store(id, t)
   }
 }

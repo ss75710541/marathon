@@ -1,12 +1,14 @@
 package mesosphere.marathon.core.appinfo.impl
 
 import mesosphere.marathon.MarathonSchedulerService
-import mesosphere.marathon.Protos.MarathonTask
 import mesosphere.marathon.core.appinfo.{ AppInfo, EnrichedTask, TaskCounts, TaskStatsByVersion }
 import mesosphere.marathon.core.base.Clock
+import mesosphere.marathon.core.readiness.ReadinessCheckResult
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.health.{ Health, HealthCheckManager }
 import mesosphere.marathon.state._
-import mesosphere.marathon.tasks.TaskTracker
+import mesosphere.marathon.upgrade.DeploymentManager.DeploymentStepInfo
 import mesosphere.marathon.upgrade.DeploymentPlan
 import org.slf4j.LoggerFactory
 
@@ -26,13 +28,22 @@ class AppInfoBaseData(
 
   if (log.isDebugEnabled) log.debug(s"new AppInfoBaseData $this")
 
+  lazy val runningDeployments: Future[Seq[DeploymentStepInfo]] = marathonSchedulerService.listRunningDeployments()
+
+  lazy val readinessChecksByAppFuture: Future[Map[PathId, Seq[ReadinessCheckResult]]] = {
+    runningDeployments.map { infos =>
+      infos.foldLeft(Map.empty[PathId, Vector[ReadinessCheckResult]].withDefaultValue(Vector.empty)) { (result, info) =>
+        result ++ info.readinessChecksByApp.map {
+          case (appId, checkResults) => appId -> (result(appId) ++ checkResults)
+        }
+      }
+    }
+  }
+
   lazy val runningDeploymentsByAppFuture: Future[Map[PathId, Seq[Identifiable]]] = {
     log.debug("Retrieving running deployments")
 
-    val allRunningDeploymentsFuture: Future[Seq[DeploymentPlan]] =
-      for {
-        stepInfos <- marathonSchedulerService.listRunningDeployments()
-      } yield stepInfos.map(_.plan)
+    val allRunningDeploymentsFuture: Future[Seq[DeploymentPlan]] = runningDeployments.map(_.map(_.plan))
 
     allRunningDeploymentsFuture.map { allDeployments =>
       val byApp = Map.empty[PathId, Vector[DeploymentPlan]].withDefaultValue(Vector.empty)
@@ -48,6 +59,11 @@ class AppInfoBaseData(
     }
   }
 
+  lazy val tasksByAppFuture: Future[TaskTracker.TasksByApp] = {
+    log.debug("Retrieve tasks")
+    taskTracker.tasksByApp()
+  }
+
   def appInfoFuture(app: AppDefinition, embed: Set[AppInfo.Embed]): Future[AppInfo] = {
     val appData = new AppData(app)
     embed.foldLeft(Future.successful(AppInfo(app))) { (infoFuture, embed) =>
@@ -55,6 +71,8 @@ class AppInfoBaseData(
         embed match {
           case AppInfo.Embed.Counts =>
             appData.taskCountsFuture.map(counts => info.copy(maybeCounts = Some(counts)))
+          case AppInfo.Embed.Readiness =>
+            readinessChecksByAppFuture.map(checks => info.copy(maybeReadinessCheckResults = Some(checks(app.id))))
           case AppInfo.Embed.Deployments =>
             runningDeploymentsByAppFuture.map(deployments => info.copy(maybeDeployments = Some(deployments(app.id))))
           case AppInfo.Embed.LastTaskFailure =>
@@ -79,14 +97,9 @@ class AppInfoBaseData(
   private[this] class AppData(app: AppDefinition) {
     lazy val now: Timestamp = clock.now()
 
-    lazy val tasks: Iterable[MarathonTask] = {
-      log.debug(s"retrieving running tasks for app [${app.id}]")
-      taskTracker.getTasks(app.id)
-    }
+    lazy val tasksFuture: Future[Iterable[Task]] = tasksByAppFuture.map(_.appTasks(app.id))
 
-    lazy val tasksFuture: Future[Iterable[MarathonTask]] = Future.successful(tasks)
-
-    lazy val healthCountsFuture: Future[Map[String, Seq[Health]]] = {
+    lazy val healthCountsFuture: Future[Map[Task.Id, Seq[Health]]] = {
       log.debug(s"retrieving health counts for app [${app.id}]")
       healthCheckManager.statuses(app.id)
     }.recover {
@@ -120,8 +133,8 @@ class AppInfoBaseData(
 
     lazy val enrichedTasksFuture: Future[Seq[EnrichedTask]] = {
       def statusesToEnrichedTasks(
-        tasksById: Map[String, MarathonTask],
-        statuses: Map[String, collection.Seq[Health]]): Seq[EnrichedTask] = {
+        tasksById: Map[Task.Id, Task],
+        statuses: Map[Task.Id, collection.Seq[Health]]): Seq[EnrichedTask] = {
         for {
           (taskId, healthResults) <- statuses.to[Seq]
           task <- tasksById.get(taskId)
@@ -129,8 +142,13 @@ class AppInfoBaseData(
       }
 
       log.debug(s"assembling rich tasks for app [${app.id}]")
-      val tasksById: Map[String, MarathonTask] = tasks.map(task => task.getId -> task).toMap
-      healthCheckManager.statuses(app.id).map(statuses => statusesToEnrichedTasks(tasksById, statuses))
+
+      val tasksByIdFuture = tasksByAppFuture.map(_.appTasksMap.get(app.id).map(_.taskMap).getOrElse(Map.empty))
+      val healthStatusesFutures = healthCheckManager.statuses(app.id)
+      for {
+        tasksById <- tasksByIdFuture
+        statuses <- healthStatusesFutures
+      } yield statusesToEnrichedTasks(tasksById, statuses)
     }.recover {
       case NonFatal(e) => throw new RuntimeException(s"while assembling rich tasks for app [${app.id}]", e)
     }

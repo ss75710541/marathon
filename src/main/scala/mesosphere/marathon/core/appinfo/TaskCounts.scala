@@ -1,7 +1,7 @@
 package mesosphere.marathon.core.appinfo
 
-import mesosphere.marathon.Protos.MarathonTask
 import mesosphere.marathon.core.appinfo.impl.TaskForStatistics
+import mesosphere.marathon.core.task.Task
 import mesosphere.marathon.health.Health
 import mesosphere.marathon.state.Timestamp
 import org.apache.mesos.{ Protos => mesos }
@@ -13,16 +13,34 @@ import org.apache.mesos.{ Protos => mesos }
   * @param tasksUnhealthy snapshot of the number of unhealthy tasks (does not include tasks without health info)
   */
 case class TaskCounts(
-  tasksStaged: Int,
-  tasksRunning: Int,
-  tasksHealthy: Int,
-  tasksUnhealthy: Int)
+    tasksStaged: Int,
+    tasksRunning: Int,
+    tasksHealthy: Int,
+    tasksUnhealthy: Int) {
+  def +(counts: TaskCounts): TaskCounts = {
+    copy(
+      tasksRunning = tasksRunning + counts.tasksRunning,
+      tasksStaged = tasksStaged + counts.tasksStaged,
+      tasksHealthy = tasksHealthy + counts.tasksHealthy,
+      tasksUnhealthy = tasksUnhealthy + counts.tasksUnhealthy
+    )
+  }
+
+  def -(counts: TaskCounts): TaskCounts = {
+    copy(
+      tasksRunning = tasksRunning - counts.tasksRunning,
+      tasksStaged = tasksStaged - counts.tasksStaged,
+      tasksHealthy = tasksHealthy - counts.tasksHealthy,
+      tasksUnhealthy = tasksUnhealthy - counts.tasksUnhealthy
+    )
+  }
+}
 
 object TaskCounts {
   def zero: TaskCounts = TaskCounts(tasksStaged = 0, tasksRunning = 0, tasksHealthy = 0, tasksUnhealthy = 0)
 
-  def apply(appTasks: Iterable[MarathonTask], statuses: Map[String, Seq[Health]]): TaskCounts = {
-    TaskCounts(TaskForStatistics.forTasks(Timestamp(0), appTasks, statuses))
+  def apply(appTasks: Iterable[Task], healthStatuses: Map[Task.Id, Seq[Health]]): TaskCounts = {
+    TaskCounts(TaskForStatistics.forTasks(Timestamp(0), appTasks, healthStatuses))
   }
 
   def apply(appTasks: Iterable[TaskForStatistics]): TaskCounts = {

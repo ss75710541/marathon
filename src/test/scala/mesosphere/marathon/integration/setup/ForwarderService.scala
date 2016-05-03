@@ -53,7 +53,7 @@ object ForwarderService {
   }
 
   class ForwarderAppModule(myHostPort: String, httpConf: HttpConf, leaderProxyConf: LeaderProxyConf) extends BaseRestModule {
-    @Named(ModuleNames.NAMED_HOST_PORT)
+    @Named(ModuleNames.HOST_PORT)
     @Provides
     @Singleton
     def provideHostPort(httpConf: HttpConf): String = myHostPort
@@ -115,9 +115,9 @@ object ForwarderService {
   }
 
   private[this] def createConf(args: String*): ForwarderConf = {
-    val conf = new ForwarderConf(Array[String]("--assets_path", "/tmp") ++ args.map(_.toString))
-    conf.afterInit()
-    conf
+    new ForwarderConf(Array[String]("--assets_path", "/tmp") ++ args.map(_.toString)) {
+      verify()
+    }
   }
 
   private def startImpl(conf: ForwarderConf, leaderModule: Module, assetPath: String = "/tmp"): Service = {

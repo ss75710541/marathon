@@ -6,7 +6,6 @@ import Keys._
 import sbtassembly.Plugin._
 import AssemblyKeys._
 import com.typesafe.sbt.SbtScalariform._
-import net.virtualvoid.sbt.graph.Plugin.graphSettings
 import org.scalastyle.sbt.ScalastylePlugin.{ buildSettings => styleSettings }
 import scalariform.formatter.preferences._
 import sbtbuildinfo.Plugin._
@@ -39,7 +38,6 @@ object MarathonBuild extends Build {
       formatSettings ++
       scalaStyleSettings ++
       revolverSettings ++
-      graphSettings ++
       testSettings ++
       integrationTestSettings ++
       teamCitySetEnvSettings ++
@@ -108,7 +106,7 @@ object MarathonBuild extends Build {
 
   lazy val IntegrationTest = config("integration") extend Test
 
-  lazy val baseSettings = Defaults.defaultSettings ++ Seq (
+  lazy val baseSettings = Seq (
     organization := "mesosphere.marathon",
     scalaVersion := "2.11.7",
     crossScalaVersions := Seq(scalaVersion.value),
@@ -127,10 +125,10 @@ object MarathonBuild extends Build {
     ),
     javacOptions in Compile ++= Seq("-encoding", "UTF-8", "-source", "1.8", "-target", "1.8", "-Xlint:unchecked", "-Xlint:deprecation"),
     resolvers ++= Seq(
-      "Mesosphere Public Repo"    at "http://downloads.mesosphere.io/maven",
+      "Mesosphere Public Repo"    at "http://downloads.mesosphere.com/maven",
       "Typesafe Releases" at "http://repo.typesafe.com/typesafe/releases/",
       "Spray Maven Repository"    at "http://repo.spray.io/"
-    ),
+  ),
     fork in Test := true
   )
 
@@ -139,7 +137,10 @@ object MarathonBuild extends Build {
       {
         case "application.conf"                                             => MergeStrategy.concat
         case "META-INF/jersey-module-version"                               => MergeStrategy.first
+<<<<<<< HEAD
         case "log4j.properties"                                             => MergeStrategy.first
+=======
+>>>>>>> mesosphere/master
         case "org/apache/hadoop/yarn/util/package-info.class"               => MergeStrategy.first
         case "org/apache/hadoop/yarn/factories/package-info.class"          => MergeStrategy.first
         case "org/apache/hadoop/yarn/factory/providers/package-info.class"  => MergeStrategy.first
@@ -233,8 +234,13 @@ object Dependencies {
   import Dependency._
 
   val pluginInterface = Seq(
-    playJson % "compile"
+    playJson % "compile",
+    guava % "compile"
   )
+
+  val excludeSlf4jLog4j12 = ExclusionRule(organization = "org.slf4j", name = "slf4j-log4j12")
+  val excludeLog4j = ExclusionRule(organization = "log4j")
+  val excludeJCL = ExclusionRule(organization = "commons-logging")
 
   val root = Seq(
     // runtime
@@ -244,7 +250,6 @@ object Dependencies {
     sprayHttpx % "compile",
     chaos % "compile",
     mesosUtils % "compile",
-    jacksonCaseClass % "compile",
     twitterCommons % "compile",
     jodaTime % "compile",
     jodaConvert % "compile",
@@ -256,27 +261,30 @@ object Dependencies {
     hadoopHdfs % "compile",
     hadoopCommon % "compile",
     beanUtils % "compile",
-    scallop % "compile",
     playJson % "compile",
     jsonSchemaValidator % "compile",
     twitterZk % "compile",
     rxScala % "compile",
     marathonUI % "compile",
+    graphite % "compile",
+    datadog % "compile",
+    marathonApiConsole % "compile",
+    wixAccord % "compile",
 
     // test
     Test.diffson % "test",
     Test.scalatest % "test",
     Test.mockito % "test",
     Test.akkaTestKit % "test"
-  )
+  ).map(_.excludeAll(excludeSlf4jLog4j12).excludeAll(excludeLog4j).excludeAll(excludeJCL))
 }
 
 object Dependency {
   object V {
     // runtime deps versions
-    val Chaos = "0.8.0"
-    val JacksonCCM = "0.1.2"
-    val MesosUtils = "0.24.0"
+    val Chaos = "0.8.6"
+    val Guava = "18.0"
+    val MesosUtils = "0.28.0"
     val Akka = "2.3.9"
     val Spray = "1.3.2"
     val TwitterCommons = "0.0.76"
@@ -288,12 +296,16 @@ object Dependency {
     val UUIDGenerator = "3.1.3"
     val JGraphT = "0.9.1"
     val Hadoop = "2.4.1"
-    val Scallop = "0.9.5"
     val Diffson = "0.3"
-    val PlayJson = "2.3.7"
+    val PlayJson = "2.4.3"
     val JsonSchemaValidator = "2.2.6"
     val RxScala = "0.25.0"
-    val MarathonUI = "0.12.0-SNAPSHOT"
+    val MarathonUI = "1.2.0-SNAPSHOT"
+    val MarathonApiConsole = "0.1.1"
+    val Graphite = "3.1.2"
+    val DataDog = "1.1.3"
+    val Logback = "1.1.3"
+    val WixAccord = "0.5"
 
     // test deps versions
     val Mockito = "1.9.5"
@@ -308,9 +320,9 @@ object Dependency {
   val sprayClient = "io.spray" %% "spray-client" % V.Spray
   val sprayHttpx = "io.spray" %% "spray-httpx" % V.Spray
   val playJson = "com.typesafe.play" %% "play-json" % V.PlayJson
-  val chaos = "mesosphere" %% "chaos" % V.Chaos
+  val chaos = "mesosphere" %% "chaos" % V.Chaos exclude("org.glassfish.web", "javax.el")
+  val guava = "com.google.guava" % "guava" % V.Guava
   val mesosUtils = "mesosphere" %% "mesos-utils" % V.MesosUtils
-  val jacksonCaseClass = "mesosphere" %% "jackson-case-class-module" % V.JacksonCCM
   val jerseyServlet =  "com.sun.jersey" % "jersey-servlet" % V.Jersey
   val jettyEventSource = "org.eclipse.jetty" % "jetty-servlets" % V.JettyServlets
   val jerseyMultiPart =  "com.sun.jersey.contribs" % "jersey-multipart" % V.Jersey
@@ -320,13 +332,18 @@ object Dependency {
   val uuidGenerator = "com.fasterxml.uuid" % "java-uuid-generator" % V.UUIDGenerator
   val jGraphT = "org.javabits.jgrapht" % "jgrapht-core" % V.JGraphT
   val hadoopHdfs = "org.apache.hadoop" % "hadoop-hdfs" % V.Hadoop excludeAll(excludeMortbayJetty, excludeJavaxServlet)
-  val hadoopCommon = "org.apache.hadoop" % "hadoop-common" % V.Hadoop excludeAll(excludeMortbayJetty, excludeJavaxServlet)
+  val hadoopCommon = "org.apache.hadoop" % "hadoop-common" % V.Hadoop excludeAll(excludeMortbayJetty,
+    excludeJavaxServlet)
   val beanUtils = "commons-beanutils" % "commons-beanutils" % "1.9.2"
-  val scallop = "org.rogach" %% "scallop" % V.Scallop
   val jsonSchemaValidator = "com.github.fge" % "json-schema-validator" % V.JsonSchemaValidator
   val twitterZk = "com.twitter" %% "util-zk" % V.TwitterZk
   val rxScala = "io.reactivex" %% "rxscala" % V.RxScala
   val marathonUI = "mesosphere.marathon" % "ui" % V.MarathonUI
+  val marathonApiConsole = "mesosphere.marathon" % "api-console" % V.MarathonApiConsole
+  val graphite = "io.dropwizard.metrics" % "metrics-graphite" % V.Graphite
+  val datadog = "org.coursera" % "dropwizard-metrics-datadog" % V.DataDog exclude("ch.qos.logback", "logback-classic")
+  val wixAccord = "com.wix" %% "accord-core" % V.WixAccord
+
 
   object Test {
     val scalatest = "org.scalatest" %% "scalatest" % V.ScalaTest

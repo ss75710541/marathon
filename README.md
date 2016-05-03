@@ -1,9 +1,7 @@
 [![Stories in Ready](https://badge.waffle.io/mesosphere/marathon.png?label=ready&title=Ready)](https://waffle.io/mesosphere/marathon)
 # [Marathon](https://mesosphere.github.io/marathon/) [![Build Status](https://travis-ci.org/mesosphere/marathon.png?branch=master)](https://travis-ci.org/mesosphere/marathon) [![Coverage Status](https://coveralls.io/repos/mesosphere/marathon/badge.svg?branch=master)](https://coveralls.io/r/mesosphere/marathon?branch=master)
 
-Marathon is an [Apache Mesos][Mesos] framework for long-running applications. Given that
-you have Mesos running as the kernel for your datacenter, Marathon is the
-[`init`][init] or [`upstart`][upstart] daemon.
+Marathon is a production-proven [Apache Mesos][Mesos] framework for container orchestration. [DC/OS](https://dcos.io/get-started/#marathon) is the easiest way to start using Marathon.
 
 Marathon provides a
 [REST API](https://mesosphere.github.io/marathon/docs/rest-api.html) for
@@ -16,7 +14,7 @@ Chronos or [Storm][Storm] with it to ensure they survive machine failures.
 It can launch anything that can be launched in a standard shell. In fact, you
 can even start other Marathon instances via Marathon.
 
-Using Marathon versions 0.7.0+ and Mesos 0.20.0+, you can [deploy, run and scale Docker containers](https://mesosphere.github.io/marathon/docs/native-docker.html) with ease.
+Since Marathon version 0.7.0 and Mesos 0.20.0, you can [deploy, run and scale Docker containers](https://mesosphere.github.io/marathon/docs/native-docker.html) easily with native support.
 
 ## Features
 
@@ -27,10 +25,11 @@ Using Marathon versions 0.7.0+ and Mesos 0.20.0+, you can [deploy, run and scale
 * *[Service Discovery &amp; Load Balancing](https://mesosphere.github.io/marathon/docs/service-discovery-load-balancing.html)* via HAProxy or the events API (see below).
 * *[Health Checks](https://mesosphere.github.io/marathon/docs/health-checks.html)*: check your application's health via HTTP or TCP checks.
 * *[Event Subscription](https://mesosphere.github.io/marathon/docs/rest-api.html#event-subscriptions)* lets you supply an HTTP endpoint to receive notifications, for example to integrate with an external load balancer.
-* *Web UI*
+* *[Marathon UI](https://mesosphere.github.io/marathon/docs/marathon-ui.html)*
 * *[JSON/REST API](https://mesosphere.github.io/marathon/docs/rest-api.html)* for easy integration and scriptability
 * *Basic Auth* and *SSL*
-* *Metrics*: available at `/metrics` in JSON format
+* *[Metrics](https://mesosphere.github.io/marathon/docs/metrics.html)*:
+  query them at `/metrics` in JSON format or push them to graphite/statsd/datadog.
 
 ## Documentation
 
@@ -44,11 +43,36 @@ We heartily welcome external contributions to Marathon's documentation. Document
 
 ## Setting Up And Running Marathon
 
+### Dependencies
+Marathon has the following compile-time dependencies:
+* sbt - A build tool for scala. You can find the instructions for installing sbt for Mac OS X and Linux over [here](http://www.scala-sbt.org/0.13/tutorial/Setup.html).
+* JDK 1.8+
+
+For run-time, Marathon has the following dependencies:
+* libmesos - JNI bindings for talking to Apache Mesos master. Look at the *Install Mesos* section for instructions to get libmesos.
+* Apache Zookeeper - You can have a spearate Zookeeper installation specifically for Marathon, or you can use the same Zookeeper used by Mesos.
+
 ### Installation
 
-#### Install Mesos
+#### Getting started with [DC/OS](https://dcos.io/get-started/#marathon)
+The by far easiest way to get Marathon running is to use [DC/OS](https://dcos.io/get-started/#marathon). Marathon is pre-bundled into [DC/OS](https://dcos.io/get-started/#marathon).
 
-Marathon requires Mesos installed on the same machine in order to use a shared library. Instructions on how to install prepackaged releases of Mesos are available [in the Marathon docs](https://mesosphere.github.io/marathon/docs/).
+#### Install Mesos
+Marathon requires libmesos, a shared object library, that contains JNI bindings for Marathon to talk to the Mesos master. *libmesos* comes as part of the Apache Mesos installation. There are two options for installing Apache Mesos.
+
+##### Installing Mesos from prepackaged releases
+Instructions on how to install prepackaged releases of Mesos are available [in the Marathon docs](https://mesosphere.github.io/marathon/docs/).
+
+##### Building Mesos from source
+**NOTE:** *Choose this option only if building Marathon from source, else there might be version incompatibility between pre-packaged releases of Marathon and Mesos built from source.*
+
+You can find the instructions for compiling Mesos from source in the [Apache Mesos getting started docs](http://mesos.apache.org/gettingstarted/). If you want Mesos to install libraries and executables in a non-default location use the --prefix option during configuration as follows:
+
+```console
+./configure --prefix=<path to Mesos installation>
+```
+
+The `make install` will install libmesos (libmesos.so on Linux and libmesos.dylib on Mac OS X) in the install directory.
 
 #### Install Marathon
 
@@ -63,7 +87,7 @@ Instructions on how to install prepackaged releases are available [in the Marath
         sbt assembly
 
 1.  Run `./bin/build-distribution` to package Marathon as an
-    [executable JAR](http://mesosphere.com/2013/12/07/executable-jars/)
+    [executable JAR](https://mesosphere.com/blog/2013/12/07/executable-jars/)
     (optional).
 
 ### Running in Development Mode
@@ -126,43 +150,54 @@ To develop on the web UI look into the instructions of the [Marathon UI](https:/
 
 Across all installations Marathon is managing applications on more than 100,000 nodes world-wide. These are some of the companies using it:
 
-* [Airbnb](https://www.airbnb.com/)
-* [Allegro Group](http://www.allegrogroup.com)
-* [AllUnite](http://allunite.com)
+* [Adform](http://site.adform.com/)
+* [Allegro](http://allegro.tech)
+* [AllUnite](https://allunite.com/)
+* [Argus Cyber Security](http://argus-sec.com/)
 * [Artirix](http://www.artirix.com/)
-* [Corvisa](https://www.corvisa.com/)
 * [bol.com](https://www.bol.com/)
 * [Branding Brand](http://www.brandingbrand.com/)
+* [Corvisa](https://www.corvisa.com/)
+* [Criteo] (http://www.criteo.com/)
 * [Daemon](http://www.daemon.com.au/)
-* [DHL Parcel](http://www.dhlparcel.nl)
-* [Disqus](https://www.disqus.com/)
+* [DataMan](http://www.shurenyun.com/)
+* [DHL Parcel](https://www.dhlparcel.nl/)
+* [Disqus](https://disqus.com/)
+* [DueDil](https://www.duedil.com/)
 * [eBay](http://www.ebay.com/)
 * [The Factory](https://github.com/thefactory/)
 * [Football Radar](http://www.footballradar.com)
-* [Guidewire](http://www.guidewire.com/)
-* [Groupon](http://www.groupon.com/)
+* [Guidewire](https://www.guidewire.com/)
+* [Groupon](https://www.groupon.com/)
 * [GSShop](http://www.gsshop.com/)
 * [HolidayCheck](http://www.holidaycheck.com/)
 * [Human API](https://humanapi.co/)
 * [Indix](http://www.indix.com/)
 * [ING](http://www.ing.com/)
 * [iQIYI](http://www.iqiyi.com/)
+* [LaunchKey](https://launchkey.com/)
 * [Measurence](http://www.measurence.com/)
 * [Motus](http://www.motus.com/)
+* [Notonthehighstreet](http://www.notonthehighstreet.com/)
 * [OpenTable](http://www.opentable.com/)
 * [Orbitz](http://www.orbitz.com/)
 * [Otto](https://www.otto.de/)
+* [OVH](https://ovh.com/)
 * [PayPal](https://www.paypal.com)
-* [Qubit](http://www.qubitproducts.com/)
-* [RelateIQ](http://relateiq.com/)
+* [Qubit](http://www.qubit.com/)
+* [RelateIQ](https://www.salesforceiq.com/)
 * [Refinery29](https://www.refinery29.com)
 * [Sailthru](http://www.sailthru.com/)
 * [sloppy.io](http://sloppy.io/)
 * [SmartProcure](https://smartprocure.us/)
 * [Strava](https://www.strava.com)
+* [Sveriges Television](http://www.svt.se)
+* [Teradata](http://www.teradata.com)
+* [trivago](http://www.trivago.com/)
+* [VANAD Enovation](http://www.vanadenovation.nl/)
 * [Viadeo](http://www.viadeo.com)
-* [Wikia](http://www.wikia.com)
-* [WooRank](http://www.woorank.com)
+* [Wikia](http://www.wikia.com/Wikia)
+* [WooRank](https://www.woorank.com/)
 * [Yelp](http://www.yelp.com/)
 
 Not in the list? Open a pull request and add yourself!
@@ -180,6 +215,8 @@ email list. You can find Marathon support in the `#marathon` channel, and Mesos
 support in the `#mesos` channel, on [freenode][freenode] (IRC). The team at
 [Mesosphere][Mesosphere] is also happy to answer any questions.
 
+If you'd like to take part in design research and test new features in Marathon before they're released, please add your name to our [UX Research](http://uxresearch.mesosphere.com) list.
+
 ## Authors
 
 Marathon was created by [Tobias Knaup](https://github.com/guenter) and
@@ -187,14 +224,14 @@ Marathon was created by [Tobias Knaup](https://github.com/guenter) and
 developed by the team at Mesosphere and by many contributors from
 the community.
 
-[Chronos]: https://github.com/airbnb/chronos "Airbnb's Chronos"
+[Chronos]: https://github.com/mesos/chronos "Airbnb's Chronos"
 [Mesos]: https://mesos.apache.org/ "Apache Mesos"
 [Zookeeper]: https://zookeeper.apache.org/ "Apache Zookeeper"
-[Storm]: http://storm-project.net/ "distributed realtime computation"
+[Storm]: http://storm.apache.org "distributed realtime computation"
 [freenode]: https://freenode.net/ "IRC channels"
 [upstart]: http://upstart.ubuntu.com/ "Ubuntu's event-based daemons"
 [init]: https://en.wikipedia.org/wiki/Init "init"
-[Mesosphere]: http://mesosphere.com/ "Mesosphere"
+[Mesosphere]: https://mesosphere.com/ "Mesosphere"
 
 ## Acknowledgements
 
@@ -211,4 +248,3 @@ and <a href="https://www.yourkit.com/.net/profiler/index.jsp">YourKit
 .NET Profiler</a>,
 innovative and intelligent tools for profiling Java and .NET
 applications.
-

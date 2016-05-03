@@ -1,30 +1,36 @@
 package mesosphere.marathon.upgrade
 
-import akka.actor.{ Actor, ActorLogging }
+import akka.actor.{ Props, ActorRef, Actor, ActorLogging }
 import akka.event.EventStream
 import mesosphere.marathon.core.launchqueue.LaunchQueue
+import mesosphere.marathon.core.readiness.ReadinessCheckExecutor
+import mesosphere.marathon.core.task.tracker.TaskTracker
+import mesosphere.marathon.event.DeploymentStatus
 import mesosphere.marathon.state.AppDefinition
-import mesosphere.marathon.tasks.TaskTracker
 import mesosphere.marathon.{ SchedulerActions, TaskUpgradeCanceledException }
 import org.apache.mesos.SchedulerDriver
 
 import scala.concurrent.Promise
 
 class TaskStartActor(
+    val deploymentManager: ActorRef,
+    val status: DeploymentStatus,
     val driver: SchedulerDriver,
     val scheduler: SchedulerActions,
-    val taskQueue: LaunchQueue,
+    val launchQueue: LaunchQueue,
     val taskTracker: TaskTracker,
     val eventBus: EventStream,
+    val readinessCheckExecutor: ReadinessCheckExecutor,
     val app: AppDefinition,
     val scaleTo: Int,
     promise: Promise[Unit]) extends Actor with ActorLogging with StartingBehavior {
 
-  val nrToStart: Int = scaleTo - taskQueue.get(app.id).map(_.totalTaskCount).getOrElse(taskTracker.count(app.id))
+  val nrToStart: Int =
+    scaleTo - launchQueue.get(app.id).map(_.finalTaskCount).getOrElse(taskTracker.countLaunchedAppTasksSync(app.id))
 
   override def initializeStart(): Unit = {
     if (nrToStart > 0)
-      taskQueue.add(app, nrToStart)
+      launchQueue.add(app, nrToStart)
   }
 
   override def postStop(): Unit = {
@@ -33,6 +39,7 @@ class TaskStartActor(
       promise.tryFailure(
         new TaskUpgradeCanceledException(
           "The task upgrade has been cancelled"))
+    super.postStop()
   }
 
   override def success(): Unit = {
@@ -40,5 +47,24 @@ class TaskStartActor(
     promise.success(())
     context.stop(self)
   }
+}
 
+//scalastyle:off
+object TaskStartActor {
+  def props(
+    deploymentManager: ActorRef,
+    status: DeploymentStatus,
+    driver: SchedulerDriver,
+    scheduler: SchedulerActions,
+    launchQueue: LaunchQueue,
+    taskTracker: TaskTracker,
+    eventBus: EventStream,
+    readinessCheckExecutor: ReadinessCheckExecutor,
+    app: AppDefinition,
+    scaleTo: Int,
+    promise: Promise[Unit]): Props = {
+    Props(new TaskStartActor(deploymentManager, status, driver, scheduler, launchQueue, taskTracker,
+      eventBus, readinessCheckExecutor, app, scaleTo, promise)
+    )
+  }
 }

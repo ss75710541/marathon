@@ -2,8 +2,9 @@ package mesosphere.marathon.api
 
 import java.io.{ IOException, InputStream, OutputStream }
 import java.net._
+import java.security.cert.X509Certificate
 import javax.inject.Named
-import javax.net.ssl.{ HttpsURLConnection, SSLContext }
+import javax.net.ssl._
 import javax.servlet._
 import javax.servlet.http.{ HttpServletRequest, HttpServletResponse }
 
@@ -53,7 +54,7 @@ trait LeaderInfo {
   */
 class LeaderProxyFilter @Inject() (httpConf: HttpConf,
                                    leaderInfo: LeaderInfo,
-                                   @Named(ModuleNames.NAMED_HOST_PORT) myHostPort: String,
+                                   @Named(ModuleNames.HOST_PORT) myHostPort: String,
                                    forwarder: RequestForwarder) extends Filter {
   //scalastyle:off null
 
@@ -179,12 +180,16 @@ trait RequestForwarder {
 class JavaUrlConnectionRequestForwarder @Inject() (
   @Named(JavaUrlConnectionRequestForwarder.NAMED_LEADER_PROXY_SSL_CONTEXT) sslContext: SSLContext,
   leaderProxyConf: LeaderProxyConf,
-  @Named(ModuleNames.NAMED_HOST_PORT) myHostPort: String)
+  @Named(ModuleNames.HOST_PORT) myHostPort: String)
     extends RequestForwarder {
 
   import JavaUrlConnectionRequestForwarder._
 
   private[this] val viaValue: String = s"1.1 $myHostPort"
+
+  private lazy val ignoreHostnameVerifier = new javax.net.ssl.HostnameVerifier {
+    override def verify(hostname: String, sslSession: SSLSession): Boolean = true
+  }
 
   override def forward(url: URL, request: HttpServletRequest, response: HttpServletResponse): Unit = {
 
@@ -197,6 +202,11 @@ class JavaUrlConnectionRequestForwarder @Inject() (
       val connection = url.openConnection() match {
         case httpsConnection: HttpsURLConnection =>
           httpsConnection.setSSLSocketFactory(sslContext.getSocketFactory)
+
+          if (leaderProxyConf.leaderProxySSLIgnoreHostname()) {
+            httpsConnection.setHostnameVerifier(ignoreHostnameVerifier)
+          }
+
           httpsConnection
         case httpConnection: HttpURLConnection =>
           httpConnection
@@ -233,6 +243,11 @@ class JavaUrlConnectionRequestForwarder @Inject() (
       }
 
       leaderConnection.addRequestProperty(HEADER_VIA, viaValue)
+      val forwardedFor = Seq(
+        Option(request.getHeader(HEADER_FORWARDED_FOR)),
+        Option(request.getRemoteAddr)
+      ).flatten.mkString(",")
+      leaderConnection.addRequestProperty(HEADER_FORWARDED_FOR, forwardedFor)
     }
 
     def copyRequestBodyToConnection(leaderConnection: HttpURLConnection, request: HttpServletRequest): Unit = {
@@ -337,5 +352,6 @@ object JavaUrlConnectionRequestForwarder {
   val ERROR_STATUS_LOOP: String = "Detected proxying loop."
   val ERROR_STATUS_CONNECTION_REFUSED: String = "Connection to leader refused."
 
+  val HEADER_FORWARDED_FOR: String = "X-Forwarded-For"
   final val NAMED_LEADER_PROXY_SSL_CONTEXT = "JavaUrlConnectionRequestForwarder.SSLContext"
 }

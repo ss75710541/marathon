@@ -4,14 +4,15 @@ import java.net.URL
 
 import akka.actor._
 import akka.event.EventStream
-import mesosphere.marathon.Protos.MarathonTask
 import mesosphere.marathon.SchedulerActions
 import mesosphere.marathon.core.launchqueue.LaunchQueue
+import mesosphere.marathon.core.readiness.ReadinessCheckExecutor
+import mesosphere.marathon.core.task.Task
+import mesosphere.marathon.core.task.tracker.TaskTracker
 import mesosphere.marathon.event.{ DeploymentStatus, DeploymentStepFailure, DeploymentStepSuccess }
 import mesosphere.marathon.health.HealthCheckManager
 import mesosphere.marathon.io.storage.StorageProvider
-import mesosphere.marathon.state.{ AppDefinition, AppRepository, PathId }
-import mesosphere.marathon.tasks.TaskTracker
+import mesosphere.marathon.state.{ AppDefinition, PathId }
 import mesosphere.marathon.upgrade.DeploymentManager.{ DeploymentFailed, DeploymentFinished, DeploymentStepInfo }
 import mesosphere.mesos.Constraints
 import org.apache.mesos.SchedulerDriver
@@ -20,16 +21,18 @@ import scala.concurrent.{ Future, Promise }
 import scala.util.{ Failure, Success }
 
 private class DeploymentActor(
-    parent: ActorRef,
+    deploymentManager: ActorRef,
     receiver: ActorRef,
     driver: SchedulerDriver,
     scheduler: SchedulerActions,
     plan: DeploymentPlan,
     taskTracker: TaskTracker,
-    taskQueue: LaunchQueue,
+    launchQueue: LaunchQueue,
     storage: StorageProvider,
     healthCheckManager: HealthCheckManager,
-    eventBus: EventStream) extends Actor with ActorLogging {
+    eventBus: EventStream,
+    readinessCheckExecutor: ReadinessCheckExecutor,
+    config: UpgradeConfig) extends Actor with ActorLogging {
 
   import context.dispatcher
   import mesosphere.marathon.upgrade.DeploymentActor._
@@ -43,7 +46,7 @@ private class DeploymentActor(
   }
 
   override def postStop(): Unit = {
-    parent ! DeploymentFinished(plan)
+    deploymentManager ! DeploymentFinished(plan)
   }
 
   def receive: Receive = {
@@ -51,7 +54,7 @@ private class DeploymentActor(
       val step = steps.next()
       currentStepNr += 1
       currentStep = Some(step)
-      parent ! DeploymentStepInfo(plan, currentStep.getOrElse(DeploymentStep(Nil)), currentStepNr)
+      deploymentManager ! DeploymentStepInfo(plan, currentStep.getOrElse(DeploymentStep(Nil)), currentStepNr)
 
       performStep(step) onComplete {
         case Success(_) => self ! NextStep
@@ -77,14 +80,15 @@ private class DeploymentActor(
       Future.successful(())
     }
     else {
-      eventBus.publish(DeploymentStatus(plan, step))
+      val status = DeploymentStatus(plan, step)
+      eventBus.publish(status)
 
       val futures = step.actions.map { action =>
         healthCheckManager.addAllFor(action.app) // ensure health check actors are in place before tasks are launched
         action match {
-          case StartApplication(app, scaleTo)         => startApp(app, scaleTo)
-          case ScaleApplication(app, scaleTo, toKill) => scaleApp(app, scaleTo, toKill)
-          case RestartApplication(app)                => restartApp(app)
+          case StartApplication(app, scaleTo)         => startApp(app, scaleTo, status)
+          case ScaleApplication(app, scaleTo, toKill) => scaleApp(app, scaleTo, toKill, status)
+          case RestartApplication(app)                => restartApp(app, status)
           case StopApplication(app)                   => stopApp(app.copy(instances = 0))
           case ResolveArtifacts(app, urls)            => resolveArtifacts(app, urls)
         }
@@ -97,27 +101,20 @@ private class DeploymentActor(
     }
   }
 
-  def startApp(app: AppDefinition, scaleTo: Int): Future[Unit] = {
+  def startApp(app: AppDefinition, scaleTo: Int, status: DeploymentStatus): Future[Unit] = {
     val promise = Promise[Unit]()
     context.actorOf(
-      Props(
-        classOf[AppStartActor],
-        driver,
-        scheduler,
-        taskQueue,
-        taskTracker,
-        eventBus,
-        app,
-        scaleTo,
-        promise
-      )
+      AppStartActor.props(deploymentManager, status, driver, scheduler, launchQueue, taskTracker,
+        eventBus, readinessCheckExecutor, app, scaleTo, promise)
     )
     promise.future
   }
 
-  def scaleApp(app: AppDefinition, scaleTo: Int, toKill: Option[Set[MarathonTask]]): Future[Unit] = {
-    val runningTasks = taskTracker.get(app.id)
-    def killToMeetConstraints(notSentencedAndRunning: Set[MarathonTask], toKillCount: Int) =
+  def scaleApp(app: AppDefinition, scaleTo: Int,
+               toKill: Option[Iterable[Task]],
+               status: DeploymentStatus): Future[Unit] = {
+    val runningTasks = taskTracker.appTasksLaunchedSync(app.id)
+    def killToMeetConstraints(notSentencedAndRunning: Iterable[Task], toKillCount: Int) =
       Constraints.selectTasksToKill(app, notSentencedAndRunning, toKillCount)
 
     val ScalingProposition(tasksToKill, tasksToStart) = ScalingProposition.propose(
@@ -130,17 +127,8 @@ private class DeploymentActor(
     def startTasksIfNeeded: Future[Unit] = tasksToStart.fold(Future.successful(())) { _ =>
       val promise = Promise[Unit]()
       context.actorOf(
-        Props(
-          classOf[TaskStartActor],
-          driver,
-          scheduler,
-          taskQueue,
-          taskTracker,
-          eventBus,
-          app,
-          scaleTo,
-          promise
-        )
+        TaskStartActor.props(deploymentManager, status, driver, scheduler, launchQueue, taskTracker, eventBus,
+          readinessCheckExecutor, app, scaleTo, promise)
       )
       promise.future
     }
@@ -148,35 +136,28 @@ private class DeploymentActor(
     killTasksIfNeeded.flatMap(_ => startTasksIfNeeded)
   }
 
-  def killTasks(appId: PathId, tasks: Seq[MarathonTask]): Future[Unit] = {
+  def killTasks(appId: PathId, tasks: Seq[Task]): Future[Unit] = {
     val promise = Promise[Unit]()
-    context.actorOf(Props(classOf[TaskKillActor], driver, appId, taskTracker, eventBus, tasks.toSet, promise))
+    context.actorOf(TaskKillActor.props(driver, appId, taskTracker, eventBus, tasks.map(_.taskId), config, promise))
     promise.future
   }
 
   def stopApp(app: AppDefinition): Future[Unit] = {
     val promise = Promise[Unit]()
-    context.actorOf(Props(classOf[AppStopActor], driver, taskTracker, eventBus, app, promise))
+    context.actorOf(AppStopActor.props(driver, taskTracker, eventBus, app, config, promise))
     promise.future.andThen {
       case Success(_) => scheduler.stopApp(driver, app)
     }
   }
 
-  def restartApp(app: AppDefinition): Future[Unit] = {
+  def restartApp(app: AppDefinition, status: DeploymentStatus): Future[Unit] = {
     if (app.instances == 0) {
       Future.successful(())
     }
     else {
       val promise = Promise[Unit]()
-      context.actorOf(
-        Props(
-          new TaskReplaceActor(
-            driver,
-            taskQueue,
-            taskTracker,
-            eventBus,
-            app,
-            promise)))
+      context.actorOf(TaskReplaceActor.props(deploymentManager, status, driver, launchQueue, taskTracker,
+        eventBus, readinessCheckExecutor, app, promise))
       promise.future
     }
   }
@@ -193,32 +174,37 @@ object DeploymentActor {
   case object Finished
   final case class Cancel(reason: Throwable)
   final case class Fail(reason: Throwable)
+  final case class DeploymentActionInfo(plan: DeploymentPlan, step: DeploymentStep, action: DeploymentAction)
 
   // scalastyle:off parameter.number
   def props(
-    parent: ActorRef,
+    deploymentManager: ActorRef,
     receiver: ActorRef,
     driver: SchedulerDriver,
     scheduler: SchedulerActions,
     plan: DeploymentPlan,
     taskTracker: TaskTracker,
-    taskQueue: LaunchQueue,
+    launchQueue: LaunchQueue,
     storage: StorageProvider,
     healthCheckManager: HealthCheckManager,
-    eventBus: EventStream): Props = {
+    eventBus: EventStream,
+    readinessCheckExecutor: ReadinessCheckExecutor,
+    config: UpgradeConfig): Props = {
     // scalastyle:on parameter.number
 
     Props(new DeploymentActor(
-      parent,
+      deploymentManager,
       receiver,
       driver,
       scheduler,
       plan,
       taskTracker,
-      taskQueue,
+      launchQueue,
       storage,
       healthCheckManager,
-      eventBus
+      eventBus,
+      readinessCheckExecutor,
+      config
     ))
   }
 }

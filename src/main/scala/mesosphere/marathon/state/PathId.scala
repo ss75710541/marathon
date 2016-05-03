@@ -1,8 +1,12 @@
 package mesosphere.marathon.state
 
+import mesosphere.marathon.api.v2.Validation.isTrue
 import mesosphere.marathon.plugin
 
 import scala.language.implicitConversions
+
+import com.wix.accord.dsl._
+import com.wix.accord._
 
 case class PathId(path: List[String], absolute: Boolean = true) extends Ordered[PathId] with plugin.PathId {
 
@@ -87,5 +91,51 @@ object PathId {
   implicit class StringPathId(val stringPath: String) extends AnyVal {
     def toPath: PathId = PathId(stringPath)
     def toRootPath: PathId = PathId(stringPath).canonicalPath()
+  }
+
+  /**
+    * This regular expression is used to validate each path segment of an ID.
+    *
+    * If you change this, please also change "pathType" in AppDefinition.json and
+    * notify the maintainers of the DCOS CLI.
+    */
+  private[this] val ID_PATH_SEGMENT_PATTERN =
+    "^(([a-z0-9]|[a-z0-9][a-z0-9\\-]*[a-z0-9])\\.)*([a-z0-9]|[a-z0-9][a-z0-9\\-]*[a-z0-9])|(\\.|\\.\\.)$".r
+
+  private val validPathChars = new Validator[PathId] {
+    override def apply(pathId: PathId): Result = {
+      validate(pathId.path)(validator = pathId.path.each should matchRegexFully(ID_PATH_SEGMENT_PATTERN.pattern))
+    }
+  }
+
+  /**
+    * For external usage. Needed to overwrite the whole description, e.g. id.path -> id.
+    */
+  implicit val pathIdValidator = validator[PathId] { path =>
+    path is childOf(path.parent)
+    path is validPathChars
+  }
+
+  /**
+    * Validate path with regards to some parent path.
+    * @param base Path of parent.
+    */
+  def validPathWithBase(base: PathId): Validator[PathId] = validator[PathId] { path =>
+    path is childOf(base)
+    path is validPathChars
+  }
+
+  private def childOf(parent: PathId): Validator[PathId] = {
+    isTrue[PathId](s"Identifier is not child of $parent. Hint: use relative paths.") { child =>
+      parent == PathId.empty || !parent.absolute ||
+        (parent.absolute && child.canonicalPath(parent).parent == parent)
+    }
+  }
+
+  /**
+    * Needed for AppDefinitionValidatorTest.testSchemaLessStrictForId.
+    */
+  val absolutePathValidator = isTrue[PathId]("Path needs to be absolute") { path =>
+    path.absolute
   }
 }
